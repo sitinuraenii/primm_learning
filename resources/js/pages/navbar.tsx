@@ -20,7 +20,7 @@ export default function Navbar({ canRegister = true }: { canRegister?: boolean }
       <nav className="max-w-7xl mx-auto flex items-center justify-between p-4 gap-6">
         <div className="flex items-center">
           <AppLogoIcon className="size-7 text-white" />
-          <span className="ml-2 text-lg font-semibold">ProgLearn</span>
+          <span className="ml-2 text-lg font-semibold">PrimmLearn</span>
         </div>
 
         <div className="flex items-center gap-4">

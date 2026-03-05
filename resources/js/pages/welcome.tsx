@@ -26,7 +26,7 @@ export default function Welcome(){
                                 marginBottom: '10px'
                                 }}
                             >
-                                PROGLEARN
+                                PRIMMLEARN
                             </h1>
                             </div>
                         <p className="mt-8 text-center text-lg font-medium text-gray-500 sm:text-xl">
