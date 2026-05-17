@@ -4,6 +4,8 @@ import { X, BotMessageSquare, Send } from 'lucide-react';
 
 interface ChatAIProps {
     pertanyaanId: number;
+    hintUrl: string;
+    activeStep: string;
 }
 interface PageProps {
     flash: {
@@ -13,16 +15,27 @@ interface PageProps {
     [key: string]: any; // Untuk props lainnya
 }
 
-const ChatAI: React.FC<ChatAIProps> = ({ pertanyaanId }) => {
+interface FormChatData {
+    question: string;
+    pertanyaan_id: number;
+    jawaban_sementara: string;
+    stage: string;
+    history: { role: string; content: string }[];
+}
+
+const ChatAI: React.FC<ChatAIProps> = ({ pertanyaanId, activeStep}) => {
     const { props } = usePage<PageProps>();
     const [isOpen, setIsOpen] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     
     const [messages, setMessages] = useState<{role: string, content: string}[]>([]);
 
-    const { data, setData, post, processing, reset } = useForm({
+    const { data, setData, post, transform, processing, reset } = useForm<FormChatData>({
         question: '',
         pertanyaan_id: pertanyaanId, 
+        jawaban_sementara: '', 
+        stage: activeStep,
+        history: []
     });
 
     useEffect(() => {
@@ -48,43 +61,55 @@ const ChatAI: React.FC<ChatAIProps> = ({ pertanyaanId }) => {
         e.preventDefault();
         if (!data.question.trim() || processing) return;
 
-        // 1. Tambahkan pesan user ke UI
-        const userMessage = data.question;
-        setMessages(prev => [...prev, { role: 'user', content: userMessage }]);
-        
-        // Simpan referensi ke data agar tidak hilang saat reset
-        post('/ask-gemini', {
+        // 1. Ambil jawaban siswa secara dinamis
+        let jawabanSiswa = "";
+        if (activeStep?.toLowerCase() === 'investigate') {
+            const el = document.querySelector('input[name="jawaban_investigate"]') as HTMLInputElement;
+            jawabanSiswa = el?.value || "";
+        } else {
+            jawabanSiswa = localStorage.getItem('primm_editor_code') || "";
+        }
+
+        // 2. Gabungkan pesan baru ke dalam history chat
+        const updatedMessages = [...messages, { role: 'user', content: data.question }];
+
+        // 3. Tambahkan langsung ke UI chat layar
+        setMessages(updatedMessages);
+
+        // 4. Gunakan transform untuk menyisipkan data tambahan ke payload sebelum dikirim
+        transform((oldData) => ({
+            ...oldData,
+            jawaban_sementara: jawabanSiswa,
+            stage: activeStep,
+            history: updatedMessages, // Mengirimkan riwayat utuh ke Laravel
+        }));
+
+        // 5. Kirim request post secara bersih (tanpa properti 'data' ilegal di dalam opsi)
+        post('/hint', {
             preserveScroll: true,
             preserveState: true,
-            onSuccess: (page) => {
-                // Gunakan pencarian data yang lebih aman dari flash session
+            onSuccess: (page: any) => {
                 const flash = (page.props as any).flash;
-                
                 if (flash?.aiResponse) {
                     setMessages(prev => [...prev, { role: 'bot', content: flash.aiResponse }]);
                 } else if (flash?.error) {
-                    // Jika ada error spesifik dari backend (seperti limit API)
-                    setMessages(prev => [...prev, { 
-                        role: 'bot', 
-                        content: flash.error 
-                    }]);
+                    setMessages(prev => [...prev, { role: 'bot', content: flash.error }]);
                 } else {
-                    // Fallback jika tidak ada respon sama sekali
                     setMessages(prev => [...prev, { 
                         role: 'bot', 
-                        content: 'Maaf, Tutor AI sedang tidak merespons. Coba ulangi pertanyaannya ya.' 
+                        content: 'Maaf, Tutor AI sedang tidak merespons. Coba ulangi ya.' 
                     }]);
                 }
                 reset('question');
             },
-            onError: (err) => {
+            onError: (err: any) => {
                 console.error("Error post:", err);
                 setMessages(prev => [...prev, { 
                     role: 'bot', 
                     content: 'Terjadi gangguan koneksi ke server.' 
                 }]);
             }
-        });
+        }); 
     };
 
     return (
@@ -177,9 +202,9 @@ const ChatAI: React.FC<ChatAIProps> = ({ pertanyaanId }) => {
                     {/* Label di atas tombol */}
                     <div className="mb-2 bg-white px-3 py-1.5 rounded-xl shadow-lg border border-gray-100 animate-bounce">
                         <span className="text-[10px] font-bold text-[#0F828C] text-center leading-tight">
-    Bingung?<br />
-    TanyaBot!
-</span>
+                            Bingung?<br />
+                            TanyaBot!
+                        </span>
                         {/* Segitiga kecil di bawah label */}
                         <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-white border-b border-r border-gray-100 rotate-45"></div>
                     </div>

@@ -31,7 +31,7 @@ createInertiaApp({
 });
 
 router.on('start', (event: any) => {
-    if (event.detail.visit.url.pathname === '/ask-gemini') {
+    if (event.detail.visit.url.pathname === '/hint') {
         event.detail.visit.showProgress = false;
     }
 });

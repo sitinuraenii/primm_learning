@@ -35,8 +35,13 @@ return [
         ],
     ],
 
-        'gemini' => [
+    'groq' => [
+        'key' => env('GROQ_API_KEY'),
+    ],
+    'gemini' => [
         'key' => env('GEMINI_API_KEY'),
+        'key2' => env('GEMINI_API_KEY_2'),
+        'key3' => env('GEMINI_API_KEY_3'),
     ],
 
 ];

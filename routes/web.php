@@ -17,7 +17,6 @@ use App\Http\Controllers\Grading\GradingController;
 use App\Http\Controllers\Siswa\GradingSiswa\StudentGradeController;
 use App\Http\Controllers\GeminiController;
 
-
 Route::get('/', function () {
     if (Auth::check()) {
         return Auth::user()->role === 'guru'
@@ -191,6 +190,9 @@ Route::middleware(['auth'])->group(function () {
         ->name('siswa.course.saveProgress');
 });
 
-Route::post('/ask-gemini', [GeminiController::class, 'ask'])->name('gemini.ask');
+// Route::post('/ask-gemini', [GeminiController::class, 'ask'])->name('gemini.ask');
+Route::post('/hint', [GeminiController::class, 'getHint'])
+     ->name('hint.request')
+     ->middleware(['auth']);
 
 require __DIR__ . '/settings.php';

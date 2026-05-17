@@ -9,7 +9,7 @@ use Illuminate\Support\Facades\Log;
 
 class GeminiController extends Controller
 {
-    public function ask(Request $request)
+    public function getHint(Request $request)
     {
         $request->validate([
             'question' => 'required|string',
@@ -19,7 +19,7 @@ class GeminiController extends Controller
         try {
             $data = DB::table('primm_questions')
                 ->join('primms', 'primm_questions.primm_id', '=', 'primms.id')
-                ->select('primm_questions.pembahasan', 'primms.tahap')
+                ->select('primm_questions.pembahasan', 'primm_questions.pertanyaan', 'primms.tahap', 'primms.kode_program')
                 ->where('primm_questions.id', $request->pertanyaan_id)
                 ->first();
 
@@ -27,64 +27,153 @@ class GeminiController extends Controller
                 return back()->with('error', 'Konteks soal tidak ditemukan.');
             }
 
-            // 1. Ambil key dan acak urutannya
-            $apiKeys = array_filter([
-                env('GEMINI_API_KEY'),
-                env('GEMINI_API_KEY_2'),
-                env('GEMINI_API_KEY_3'),
-            ]);
-
-            if (empty($apiKeys)) {
-                return back()->with('error', 'API Key kosong di .env');
+            // =========================================================================
+            // HITUNG INTERAKSI UNTUK KONTEKS SCAFFOLDING (TANPA PEMBATASAN CHAT)
+            // =========================================================================
+            $sessionKey = 'chat_count_' . $request->pertanyaan_id;
+            
+            // Jika history dari frontend kosong (habis di-refresh), reset hitungan dari 0
+            if (empty($request->history)) {
+                session()->forget($sessionKey);
             }
 
-            shuffle($apiKeys);
+            $jumlahChatSiswa = session()->get($sessionKey, 0);
+            $interaksiKe = $jumlahChatSiswa + 1;
+            // =========================================================================
 
-            $systemPrompt = "Role: Tutor AI PrimmLearn. Tahap: {$data->tahap}. Ref: \"{$data->pembahasan}\". Rules: 1. Awali respon dengan PERTANYAAN. 2. Max 2 kalimat. 3. DILARANG beri kode/analogi (kecuali MODIFY/MAKE). 4. Jika tanya hasil: tanya balik alur. 5. Mentok? Beri 1 kata kunci.";
+            // =========================================================================
+            // PENERJEMAH ROLE 'BOT' MENJADI 'ASSISTANT' (SOLUSI EROR CHAT KE-2)
+            // =========================================================================
+            $formattedHistory = [];
+            foreach ($request->history ?? [] as $msg) {
+                // Mengubah 'bot' dari React menjadi 'assistant' agar dikenali Groq/DeepSeek
+                $role = ($msg['role'] === 'bot' || $msg['role'] === 'assistant') ? 'assistant' : 'user';
+                $formattedHistory[] = [
+                    'role' => $role,
+                    'content' => $msg['content']
+                ];
+            }
 
-            $jawabanAI = null;
+            // Mencegah duplikasi pesan terakhir di dalam array history
+            if (!empty($formattedHistory) && end($formattedHistory)['content'] === $request->question) {
+                array_pop($formattedHistory);
+            }
+            // =========================================================================
 
-            // 2. LOOPING: Mencoba satu per satu sampai berhasil
-            foreach ($apiKeys as $apiKey) {
+            // 1. Susun daftar provider berdasarkan PRIORITAS
+            $providers = [];
 
-                $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=" . $apiKey;
-
-                $response = Http::withoutVerifying()
-                    ->timeout(30)
-                    ->post($url, [
-                        'contents' => [
-                            ['role' => 'user', 'parts' => [['text' => $systemPrompt . "\n\nPertanyaan Siswa: " . $request->question]]]
-                        ],
-                        'generationConfig' => [
-                            'temperature' => 0.7,
-                            'maxOutputTokens' => 300,
-                        ]
-                    ]);
-
-                // 3. CEK SUKSES: Jika berhasil, ambil jawaban dan BERHENTI (break) dari loop
-                if ($response->successful()) {
-                    $resData = $response->json();
-                    if (isset($resData['candidates'][0]['content']['parts'][0]['text'])) {
-                        $jawabanAI = $resData['candidates'][0]['content']['parts'][0]['text'];
-                        break; // SUKSES! Jangan coba key berikutnya.
-                    }
-                } else {
-                    // Jika gagal (429/limit), catat ke log dan biarkan loop lanjut ke $apiKey berikutnya
-                    Log::warning("API Key Limit, mencoba key cadangan... Status: " . $response->status());
+            // PRIORITAS 1: Groq
+            foreach (['GROQ_API_KEY'] as $envKey) {
+                if ($key = env($envKey)) {
+                    $providers[] = ['type' => 'groq', 'key' => $key];
                 }
             }
 
-            // 4. KEMBALIKAN RESPONS
+            // PRIORITAS 2: DeepSeek
+            foreach (['DEEPSEEK_API_KEY'] as $envKey) {
+                if ($key = env($envKey)) {
+                    $providers[] = ['type' => 'deepseek', 'key' => $key];
+                }
+            }
+
+            if (empty($providers)) {
+                return back()->with('error', 'API Key tidak dikonfigurasi di .env');
+            }
+
+            $systemPrompt = "Kamu adalah Tutor AI interaktif yang ramah, santai, dan SANGAT SINGKAT untuk siswa SMK Kelas 10. Tugasmu membimbing siswa menemukan jawaban secara mandiri dengan metode scaffolding langkah demi langkah — TANPA memberi jawaban langsung, TANPA membocorkan kunci jawaban, dan TANPA membuat kesimpulan.
+
+            KONTEKS INTERAKSI:
+            - Tahap Bimbingan Saat Ini: {$data->tahap}
+            - Pertanyaan Siswa/Soal: \"{$data->pertanyaan}\"
+            - Kode Program: 
+            {$data->kode_program}
+            - Konsep Target Pemahaman: \"{$data->pembahasan}\"
+            - Urutan Interaksi Ke: {$interaksiKe}
+
+            BATASAN RESPONS (MUTLAK & KETAT):
+            1. WAJIB MAKSIMAL 2 KALIMAT PENDEK per respons. Jangan bertele-tele, jangan membuat penjelasan panjang, dan jangan berparagraf-paragraf.
+            2. DILARANG KERAS memberikan jawaban langsung atau membocorkan cara kerja elemen kode di kolom \"{$data->pembahasan}\".
+
+            STRATEGI SCAFFOLDING LANGSUNG PADA INTI:
+            1. Jika soal meminta penjelasan (Proses/Fungsi/Alasan): Jangan beri penjelasannya. Pancing siswa memberikan pendapat/dugaan awal mereka mengenai elemen tersebut dan suruh mereka melihat elemen di sekitarnya.
+            2. Jika siswa menjawab singkat (Contoh: 'ya', 'berubah', 'ada in'): Jangan beri petunjuk baru. Paksa siswa untuk menjelaskan detail dari jawaban singkatnya (Misal: 'Nah, di sebelah mana berubahnya? Coba jelaskan alasanmu!').
+            3. Jika siswa memberikan kemajuan informasi: Akui jawaban mereka, lalu bimbing selangkah lebih dekat ke target tanpa membocorkan langkah berikutnya.
+
+            EVALUASI AKHIR CHAT:
+            - Jika jawaban siswa sudah tepat sesuai \"{$data->pembahasan}\": JANGAN memberikan pertanyaan baru. Langsung ketik kalimat persis tanpa tambahan kata lain: 'Tulis kesimpulanmu di kolom jawaban sekarang. 💪'
+
+            PANDUAN BAHASA & ANTI-SPOILER:
+            1. Gunakan gaya bahasa tutor yang mengalir, alami, hangat, dan panggil 'kamu'.
+            2. JANGAN PERNAH menyebut istilah teknis pemrograman (seperti: perulangan, loop, iterasi, array, variabel, counter, range) sebelum siswa menuliskannya sendiri di dalam chat.";
+
+            $jawabanAI = null;
+
+            foreach ($providers as $provider) {
+                try {
+                    $response = null; // Inisialisasi awal aman dari undefined variable warning
+
+                    if ($provider['type'] === 'groq') {
+                        $response = Http::withoutVerifying()->timeout(20)
+                            ->withToken($provider['key'])
+                            ->post('https://api.groq.com/openai/v1/chat/completions', [
+                                'model' => env('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+                                'messages' => array_merge(
+                                    [['role' => 'system', 'content' => $systemPrompt]],
+                                    $formattedHistory, // Menggunakan history yang sudah bersih & standar
+                                    [['role' => 'user', 'content' => $request->question]]
+                                ),
+                                'temperature' => 0.2,
+                                'max_tokens' => 300,
+                            ]);
+
+                        if ($response->successful()) {
+                            $jawabanAI = $response->json()['choices'][0]['message']['content'] ?? null;
+                        }
+
+                    } elseif ($provider['type'] === 'deepseek') {
+                        $response = Http::withoutVerifying()->timeout(25)
+                            ->withToken($provider['key'])
+                            ->post('https://api.deepseek.com/chat/completions', [
+                                'model' => env('DEEPSEEK_MODEL', 'deepseek-chat'),
+                                'messages' => array_merge(
+                                    [['role' => 'system', 'content' => $systemPrompt]],
+                                    $formattedHistory, // Menggunakan history yang sudah bersih & standar
+                                    [['role' => 'user', 'content' => $request->question]]
+                                ),
+                                'temperature' => 0.2,
+                                'max_tokens' => 300,
+                            ]);
+
+                        if ($response->successful()) {
+                            $jawabanAI = $response->json()['choices'][0]['message']['content'] ?? null;
+                        }
+                    }
+
+                    if ($jawabanAI) {
+                        // Simpan hitungan chat terbaru ke session hanya jika API sukses merespons
+                        session()->put($sessionKey, $interaksiKe);
+                        break;
+                    }
+
+                    $statusCode = $response?->status() ?? 'No Response';
+                    Log::warning("Provider {$provider['type']} gagal (Status: {$statusCode}), mencoba provider berikutnya...");
+
+                } catch (\Exception $e) {
+                    Log::error("Gagal pada provider {$provider['type']}: " . $e->getMessage());
+                    continue;
+                }
+            }
+
             if ($jawabanAI) {
                 return back()->with('aiResponse', $jawabanAI);
             }
 
-            // Jika semua pintu (key) tertutup
-            return back()->with('error', 'Tutor sedang sangat ramai, coba pelajari dari materi saja yaa!');
+            return back()->with('error', 'Tutor sedang sangat ramai, coba tanyakan ke guru atau pelajari materi yaa!');
 
         } catch (\Exception $e) {
             Log::error("Sistem Error: " . $e->getMessage());
-            return back()->with('error', 'Terjadi kesalahan sistem.');
+            return back()->with('error', 'Terjadi kesalahan sistem pada server AI.');
         }
     }
 }

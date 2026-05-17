@@ -33,7 +33,7 @@ export default function Welcome(){
                                 PRIMMLEARN
                             </h1>
                             </div>
-                        <p className="mt-8 text-center text-lg font-medium text-gray-500 sm:text-xl">
+                        <p className="mt-8 text-center text-lg font-medium text-black sm:text-xl">
                         Website ini merupakan tempat belajar pemrograman dengan berbagai fitur seperti test, lembar kerja siswa, daftar nilai dan feedback.
                         </p>
                         <div className=" animate-bounce justify-center mt-10 flex items-center gap-x-6 ">

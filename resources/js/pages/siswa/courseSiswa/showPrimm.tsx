@@ -19,9 +19,9 @@ interface Question {
 interface PrimmActivity { id: number; tahap: string; gambar: string | null; kode_program: string | null; questions: Question[]; }
 interface PrimmData { [key: string]: PrimmActivity[] | undefined; }
 interface Course { id: number; title: string; description: string; link?: string; file?: string; link_drive?: string; }
-interface Props { course: Course; primm: PrimmData; activeStepFromUrl?: string; existingAnswers?: { [key: number]: string }; isAllFinished: boolean; }
+interface Props { course: Course; primm: PrimmData; hintUrl: string; activeStepFromUrl?: string; existingAnswers?: { [key: number]: string }; isAllFinished: boolean; }
 
-export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAnswers, isAllFinished }: Props) {
+export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAnswers, isAllFinished, hintUrl }: Props) {
     const steps = ["predict", "run", "investigate", "modify", "make"];
     const initialStep = activeStepFromUrl ? steps.indexOf(activeStepFromUrl.toLowerCase()) : 0;
     const [currentStep, setCurrentStep] = useState<number>(initialStep !== -1 ? initialStep : 0);
@@ -39,13 +39,14 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
     const activities = primm[activeStep] || [];
     const act = activities[currentActivityIdx];
     const [isRunning, setIsRunning] = useState<number | null>(null);
-    const [isReviewMode, setIsReviewMode] = useState(false);
     const { speak } = useVoice();
     const [isMuted, setIsMuted] = useState(false);
     const isMutedRef = useRef(isMuted);
     const [isJustSubmitted, setIsJustSubmitted] = useState(false);
     const speechIdRef = useRef(0);
-
+    const [isReviewMode, setIsReviewMode] = useState(
+        new URLSearchParams(window.location.search).get('review') === 'true'
+    );
     const stripHtml = (html: string) => {
         if (!html) return "";
 
@@ -130,7 +131,7 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
             pesan = `Sekarang mari kita bedah logikanya pada tahap ${activeStep}.`;
         }
         else if (prevStep) {
-            pesan = `Kalian keren bisa menyelesaikan tahap ${prevStep}. Sekarang tantangan berikutnya tahap ${activeStep}. Untuk menjawabnya silakan ubah di editornya langsung dan jika sudah menjawab silahkan bandingkan dengan jawabannya. Semangat!`;
+            pesan = `Kalian keren bisa menyelesaikan tahap ${prevStep}. Sekarang tantangan berikutnya tahap ${activeStep}. Semangat!`;
         }
 
         if (pesan) {
@@ -266,7 +267,7 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
         if (showSuccessModal) {
             window.speechSynthesis.cancel();
 
-            const pesanSukses = "Horeee! Pembelajaran telah selesai. Silakan unduh materi untuk belajar di rumah, lalu pilih kembali ke menu untuk keluar dari halaman ini.";
+            const pesanSukses = `Horeee! Selamatt kamu telah menyelesaikan pembelajaran materi ${course.title}`;
 
             const timer = setTimeout(() => {
                 speak(pesanSukses);
@@ -405,13 +406,12 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                     setActiveQuestionIdx(0);
                     setCurrentActivityIdx(prev => prev + 1);
                 } else {
-                    setIsReviewMode(false);
                     const nextStep = steps[currentStep + 1];
                     if (nextStep) {
                         window.speechSynthesis.cancel();
-                        router.visit(`/siswa/courseSiswa/showPrimm/${course.id}/${nextStep}`);
+                        router.visit(`/siswa/courseSiswa/showPrimm/${course.id}/${nextStep}?review=true`);
                     } else {
-                        handleFinalComplete(); 
+                        setShowSuccessModal(true);
                     }
                 }
             } else {
@@ -421,12 +421,22 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                     setActiveQuestionIdx(0);
                     setCurrentActivityIdx(prev => prev + 1);
                 } else {
-                    setIsReviewMode(true);
-                    setCurrentActivityIdx(0);
-                    setActiveQuestionIdx(0);
+                    const nextStep = steps[currentStep + 1];
+                    if (nextStep) {
+                        window.speechSynthesis.cancel();
+                        router.visit(`/siswa/courseSiswa/showPrimm/${course.id}/${nextStep}`);
+                    } else {
+                        // Jika sudah di ujung tahap 'MAKE', panggil fungsi selesai
+                        handleFinalComplete(); 
+                    }
                 }
             }
         }
+    };
+
+    const handleStartReview = () => {
+        setShowSuccessModal(false);
+        router.visit(`/siswa/courseSiswa/showPrimm/${course.id}/investigate?review=true`);
     };
 
     return (
@@ -578,7 +588,7 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                                                                 </div>
                                                             ) : (
                                                                 <textarea
-                                                                    className="w-full p-5 rounded-2xl border-2 border-gray-200 text-sm focus:border-emerald-400 outline-none min-h-[120px] resize-y"
+                                                                    className="w-full p-5 rounded-2xl border-2 border-gray-500 text-sm focus:border-blue-400 outline-none min-h-[120px] resize-y"
                                                                     value={answers[q.id] || ''}
                                                                     onChange={(e) => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
                                                                     placeholder="Tuliskan jawabanmu di sini..."
@@ -698,27 +708,33 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                         `}
                     >
                         {(() => {
-                            const isAnswered = !!(existingAnswers as any)?.[act?.questions[activeQuestionIdx]?.id];
-                            const isFinalSoal = currentActivityIdx === activities.length - 1 && activeQuestionIdx === act.questions.length - 1;
-                            const isLastStep = currentStep === steps.length - 1; // Cek apakah ini tahap 'make'
                             const isAnsweredInServer = !!(existingAnswers as any)?.[act?.questions[activeQuestionIdx]?.id];
-                            
-                            if (!isAnsweredInServer && !isJustSubmitted) return "Simpan Jawaban";
+                            const isFinalSoal = currentActivityIdx === activities.length - 1 && activeQuestionIdx === act.questions.length - 1;
+                            const isLastStep = currentStep === steps.length - 1; // Tahap 'make'
 
-                            if (['predict', 'run'].includes(activeStep) && isFinalSoal) {
-                                const nextTarget = activeStep === 'predict' ? 'RUN' : 'INVESTIGATE';
-                                return `Lanjut ke Tahap ${nextTarget}`;
-                            }
-
-                            if (isFinalSoal && !isReviewMode) {
-                                return "Lihat Pembahasan Tahap " + activeStep.toUpperCase();
+                            if (!isAnsweredInServer && !isJustSubmitted) {
+                                return "Simpan Jawaban";
                             }
 
                             if (isReviewMode) {
                                 if (isFinalSoal) {
-                                    return isLastStep ? "Selesaikan Keseluruhan" : "Lanjut Tahap Berikutnya";
+                                    return isLastStep ? "Selesaikan Review" : "Lanjut Review Tahap Berikutnya";
                                 }
                                 return "Pembahasan Selanjutnya";
+                            }
+
+                            if (isFinalSoal) {
+                                if (['predict', 'run'].includes(activeStep)) {
+                                    const nextTarget = activeStep === 'predict' ? 'RUN' : 'INVESTIGATE';
+                                    return `Lanjut ke Tahap ${nextTarget}`;
+                                }
+
+                                const nextTargetStep = steps[currentStep + 1];
+                                if (nextTargetStep) {
+                                    return `Lanjut ke Tahap ${nextTargetStep.toUpperCase()}`;
+                                } else {
+                                    return "Selesaikan Pembelajaran";
+                                }
                             }
 
                             return "Lanjut ke Soal Berikutnya";
@@ -732,8 +748,10 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                 ['investigate', 'modify', 'make'].includes(activeStep.toLowerCase()) && (
                     <div className="fixed bottom-14 right-15 z-[100] transition-all duration-500 ease-out animate-in slide-in-from-bottom-10">
                         <ChatAI 
-                            key={act.questions[0].id} 
-                            pertanyaanId={act.questions[0].id} 
+                            key={act.questions[activeQuestionIdx].id} 
+                            pertanyaanId={act.questions[activeQuestionIdx].id}
+                            hintUrl={hintUrl}
+                            activeStep={activeStep}
                         />
                     </div>
                 )
@@ -746,6 +764,12 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                         <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tight mb-2">Hore! Selesai</h2>
                         <p className="text-gray-500 text-sm mb-8">Kamu telah menuntaskan tantangan PRIMM materi ini.</p>
                         <div className="flex flex-col gap-3">
+                            <button 
+                                onClick={handleStartReview}
+                                className="flex items-center justify-center gap-2 bg-blue-600 text-white py-4 rounded-2xl font-bold text-[11px] uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
+                            >
+                                <BookOpen size={18} /> Lihat Pembahasan & Jawaban
+                            </button>
                             {course.link_drive && (
                                 <a href={course.link_drive} target="_blank" className="flex items-center justify-center gap-2 bg-emerald-600 text-white py-4 rounded-2xl font-bold text-xs uppercase tracking-widest hover:bg-emerald-700 transition-all"><ExternalLink size={18} /> Unduh Materi Lengkap</a>
                             )}

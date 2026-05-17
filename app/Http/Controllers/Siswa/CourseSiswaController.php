@@ -53,14 +53,14 @@ class CourseSiswaController extends Controller
         ]);
     }
 
-    public function showPrimm($id, $step)
+    public function showPrimm(int $id, string $step)
 {
     $course = Course::with(['primms.questions'])->findOrFail($id);
     $primmData = $course->primms->groupBy('tahap');
     $userId = Auth::id();
 
     $stepsToFetch = [$step];
-    if ($step === 'run') {
+    if (in_array($step, ['investigate'])) {
         $stepsToFetch[] = 'predict';
     }
 
@@ -88,7 +88,8 @@ class CourseSiswaController extends Controller
         'primm' => $primmData,
         'activeStepFromUrl' => $step, 
         'existingAnswers' => $existingAnswersData, 
-        'isAllFinished' => $isAllFinished
+        'isAllFinished' => $isAllFinished, 
+        'hintUrl' => url('/hint'),
     ]);
 }
 
