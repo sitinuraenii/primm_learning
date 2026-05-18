@@ -125,7 +125,7 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
             pesan = "Kamu masuk pada halaman memprediksi program. Silakan amati kode yang ada dan jawab pertanyaan prediksi dengan jelas.";
         } 
         else if (activeStep === 'run') {
-            pesan = "Prediksi selesai! Sekarang mari kita buktikan dengan menjalankan kodenya dengan menekan tombol Run.";
+            pesan = "Sekarang mari kita buktikan dengan menjalankan kodenya dengan menekan tombol Run.";
         }
         else if (activeStep === 'investigate') {
             pesan = `Sekarang mari kita bedah logikanya pada tahap ${activeStep}.`;

@@ -136,7 +136,6 @@ const ChatAI: React.FC<ChatAIProps> = ({ pertanyaanId, activeStep}) => {
                         </button>
                     </div>
 
-                    {/* Chat Body dengan Ref untuk Auto-scroll */}
                     <div 
                         ref={scrollRef}
                         className="flex-1 overflow-y-auto p-5 bg-gray-50 flex flex-col gap-4 scroll-smooth"

@@ -97,9 +97,10 @@ class GeminiController extends Controller
 
             STRATEGI SCAFFOLDING LANGSUNG PADA INTI:
             1. Jika soal meminta penjelasan (Proses/Fungsi/Alasan): Jangan beri penjelasannya. Pancing siswa memberikan pendapat/dugaan awal mereka mengenai elemen tersebut dan suruh mereka melihat elemen di sekitarnya.
-            2. Jika siswa menjawab singkat (Contoh: 'ya', 'berubah', 'ada in'): Jangan beri petunjuk baru. Paksa siswa untuk menjelaskan detail dari jawaban singkatnya (Misal: 'Nah, di sebelah mana berubahnya? Coba jelaskan alasanmu!').
-            3. Jika siswa memberikan kemajuan informasi: Akui jawaban mereka, lalu bimbing selangkah lebih dekat ke target tanpa membocorkan langkah berikutnya.
-
+            2. DILARANG menggunakan pertanyaan menuntun (leading questions) yang di dalam kalimat pertanyaannya sudah membocorkan peran/cara kerja elemen (Contoh dilarang: 'Apakah i bertindak sebagai penampung nilai?'). Gunakan pertanyaan terbuka (Contoh: 'Menurutmu, apa tugas huruf i di baris tersebut?').
+            3. Jika siswa menjawab singkat (Contoh: 'ya', 'berubah', 'ada in'): Jangan beri petunjuk baru. Paksa siswa untuk menjelaskan detail dari jawaban singkatnya (Misal: 'Nah, di sebelah mana berubahnya? Coba jelaskan alasanmu!').
+            4. Jika siswa memberikan kemajuan informasi: Akui jawaban mereka, lalu bimbing selangkah lebih dekat ke target tanpa membocorkan langkah berikutnya.
+            5. Jika jawaban siswa kurang tepat atau salah: JANGAN mengoreksi isi jawaban secara langsung, JANGAN menyebutkan jawaban yang benar. Katakan bahwa ada bagian yang perlu diperhatikan kembali, lalu arahkan siswa untuk mengamati bagian kode yang relevan dan berpikir ulang.
             EVALUASI AKHIR CHAT:
             - Jika jawaban siswa sudah tepat sesuai \"{$data->pembahasan}\": JANGAN memberikan pertanyaan baru. Langsung ketik kalimat persis tanpa tambahan kata lain: 'Tulis kesimpulanmu di kolom jawaban sekarang. 💪'
 
