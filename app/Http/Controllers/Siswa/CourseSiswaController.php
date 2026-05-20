@@ -90,6 +90,7 @@ class CourseSiswaController extends Controller
         'existingAnswers' => $existingAnswersData, 
         'isAllFinished' => $isAllFinished, 
         'hintUrl' => url('/hint'),
+        'aiDraftFeedback' => session('aiDraftFeedback')
     ]);
 }
 

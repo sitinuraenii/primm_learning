@@ -194,5 +194,6 @@ Route::middleware(['auth'])->group(function () {
 Route::post('/hint', [GeminiController::class, 'getHint'])
      ->name('hint.request')
      ->middleware(['auth']);
+Route::post('/tasks/{pertanyaan_id}/analyze-draft', [GeminiController::class, 'analyzeDraftAnswer']);
 
 require __DIR__ . '/settings.php';

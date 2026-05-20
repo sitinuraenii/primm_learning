@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from "react";
-import { Head, router, Link } from '@inertiajs/react'; 
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { Head, router, Link, usePage } from '@inertiajs/react';
 import { ArrowRight, CheckCircle2, Code2, Play, Volume2, VolumeX, BookOpen, ExternalLink, Search, X, Lightbulb } from "lucide-react";
 import CodeMirror from '@uiw/react-codemirror';
 import { python } from '@codemirror/lang-python';
@@ -26,6 +26,11 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
     const initialStep = activeStepFromUrl ? steps.indexOf(activeStepFromUrl.toLowerCase()) : 0;
     const [currentStep, setCurrentStep] = useState<number>(initialStep !== -1 ? initialStep : 0);
     const [currentActivityIdx, setCurrentActivityIdx] = useState(0);
+    const [aiDraftFeedback, setAiDraftFeedback] = useState<{
+        pertanyaan_id: number;
+        hasMisconception: boolean;
+        feedback: string | null;
+    } | null>(null); 
     const [activeQuestionIdx, setActiveQuestionIdx] = useState(0);
     const [isBlockSubmitted, setIsBlockSubmitted] = useState(false); 
     const [subView, setSubView] = useState<'aktivitas' | 'materi'>('aktivitas');
@@ -47,6 +52,99 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
     const [isReviewMode, setIsReviewMode] = useState(
         new URLSearchParams(window.location.search).get('review') === 'true'
     );
+    
+    const qActive = act?.questions[activeQuestionIdx];
+    const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const currentAiFeedback = aiDraftFeedback?.hasMisconception === true
+    ? aiDraftFeedback
+    : null;
+    const sendDraftToLaravel = async (textValue: string, questionId: number) => {
+        console.log('sendDraftToLaravel dipanggil, questionId:', questionId);
+        
+        if (!textValue || textValue.trim().length < 5 || isReviewMode || isBlockSubmitted) return;
+        const allowedSteps = ['investigate', 'modify', 'make'];
+        if (!allowedSteps.includes(activeStep?.toLowerCase())) return;
+
+        try {
+            const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '';
+            
+            const res = await fetch(`/tasks/${questionId}/analyze-draft`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': csrfToken,
+                    'Accept': 'application/json',
+                },
+                body: JSON.stringify({
+                    answer: textValue,
+                    pertanyaan_id: questionId
+                })
+            });
+
+            const data = await res.json();
+            console.log('Response data:', data);
+
+            setAiDraftFeedback({
+                ...data,
+                _ts: Date.now()
+            });
+
+        } catch (e) {
+            console.error('Radar AI error:', e);
+        }
+    };
+
+    const pendingDraftRef = useRef<{ value: string; qId: number } | null>(null);
+
+    const handleTextareaChange = (qId: number, value: string) => {
+        setAnswers(prev => ({ ...prev, [qId]: value }));
+
+        pendingDraftRef.current = { value, qId };
+
+        if (debounceTimerRef.current) {
+            clearTimeout(debounceTimerRef.current);
+        }
+
+        debounceTimerRef.current = setTimeout(() => {
+            if (pendingDraftRef.current) {
+                sendDraftToLaravel(pendingDraftRef.current.value, pendingDraftRef.current.qId);
+            }
+        }, 4000);
+    };
+
+    const handleTextareaBlur = (qId: number, value: string) => {
+        if (debounceTimerRef.current) {
+            clearTimeout(debounceTimerRef.current);
+        }
+        pendingDraftRef.current = { value, qId };
+        
+        debounceTimerRef.current = setTimeout(() => {
+            if (pendingDraftRef.current) {
+                sendDraftToLaravel(pendingDraftRef.current.value, pendingDraftRef.current.qId);
+            }
+        }, 1000);
+    };
+
+    const handleCodeEditorChange = (actIdx: number, qId: number, currentCode: string) => {
+        setEditorCodes(prev => ({ ...prev, [actIdx]: currentCode }));
+
+        if (debounceTimerRef.current) {
+            clearTimeout(debounceTimerRef.current);
+        }
+
+        // 3. Set timer baru: AI membaca kode 1.5 detik setelah siswa jeda mengetik kode
+        debounceTimerRef.current = setTimeout(() => {
+            sendDraftToLaravel(currentCode, qId);
+        }, 1500); 
+    };
+
+    useEffect(() => {
+        setAiDraftFeedback(null);
+        return () => {
+            if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
+        };
+    }, [activeQuestionIdx, activeStep]);
+
     const stripHtml = (html: string) => {
         if (!html) return "";
 
@@ -439,6 +537,8 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
         router.visit(`/siswa/courseSiswa/showPrimm/${course.id}/investigate?review=true`);
     };
 
+
+
     return (
         <div className=" h-screen w-full bg-[#F8FAFC] flex flex-col overflow-hidden">
             <header className="h-20 flex-none bg-white border-b px-6 flex items-center justify-between shadow-sm z-10">
@@ -466,6 +566,15 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                 {subView === 'aktivitas' ? (
                     <div className="w-full flex gap-4 animate-in fade-in duration-500 overflow-hidden">
                         <section className="w-1/2 flex flex-col gap-4">
+                         {['modify', 'make'].includes(activeStep?.toLowerCase()) && currentAiFeedback && currentAiFeedback.hasMisconception && (
+                            <div className="mt-3 p-4 border-l-4 border-yellow-300 bg-white text-yellow-900 rounded-r-2xl text-xs font-semibold flex gap-2 items-start animate-in slide-in-from-top-2 duration-300">
+                                <span className="shrink-0 text-sm">⚠️</span>
+                                <div>
+                                    <span className="font-bold text-yellow-700 block mb-0.5">Feedback:</span>
+                                    <p className="italic font-medium text-justify leading-relaxed">{currentAiFeedback.feedback}</p>
+                                </div>
+                            </div>
+                            )}
                             <div className="flex flex-col flex-[3] min-h-0 bg-[#1e1e1e]  shadow-xl border border-gray-800 overflow-hidden">
                                 <div className="flex items-center justify-between px-4 py-2 bg-[#252526] border-b border-black/20">
                                     <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center gap-2">
@@ -488,10 +597,21 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                                         theme={vscodeDark} 
                                         extensions={[python()]} 
                                         readOnly={!['modify', 'make'].includes(activeStep) || isBlockSubmitted || isAllFinished} 
-                                        onChange={(val: string) => setEditorCodes(prev => ({ ...prev, [currentActivityIdx]: val }))} 
+                                        onChange={(val: string) => {
+                                            // Ambil ID pertanyaan aktif sebagai jangkar/anchor konteks database
+                                            const qId = act?.questions[activeQuestionIdx]?.id;
+                                            if (qId) {
+                                                handleCodeEditorChange(currentActivityIdx, qId, val);
+                                            } else {
+                                                // Fail-safe jika tidak ada id pertanyaan di block tersebut
+                                                setEditorCodes(prev => ({ ...prev, [currentActivityIdx]: val }));
+                                            }
+                                        }} 
                                         height="100%"
                                         className="text-sm h-full"
                                     />
+
+                                   
                                 </div>
                             </div>
 
@@ -587,12 +707,26 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                                                                     })()}
                                                                 </div>
                                                             ) : (
-                                                                <textarea
-                                                                    className="w-full p-5 rounded-2xl border-2 border-gray-500 text-sm focus:border-blue-400 outline-none min-h-[120px] resize-y"
-                                                                    value={answers[q.id] || ''}
-                                                                    onChange={(e) => setAnswers(prev => ({ ...prev, [q.id]: e.target.value }))}
-                                                                    placeholder="Tuliskan jawabanmu di sini..."
-                                                                />
+                                                                <div>
+                                                                    <textarea
+                                                                        className="w-full p-5 rounded-2xl border-2 border-gray-500 text-sm focus:border-blue-400 outline-none min-h-[120px] resize-y"
+                                                                        value={answers[q.id] || ''}
+                                                                        onChange={(e) => handleTextareaChange(q.id, e.target.value)}
+                                                                        onBlur={(e) => handleTextareaBlur(q.id, e.target.value)} // Tambahkan pemicu instan di sini
+                                                                        placeholder="Tuliskan jawabanmu di sini..."
+                                                                    />
+
+                                                                    {/* CONTAINER DYNAMIC FEEDBACK RADAR GURU FASILITATOR AI */}
+                                                                    {currentAiFeedback && currentAiFeedback.hasMisconception && (
+                                                                        <div className="mt-3 p-4 border-l-4 border-yellow-500 bg-yellow-50 text-yellow-900 rounded-r-2xl text-xs font-semibold flex gap-2 items-start animate-in slide-in-from-top-2 duration-300">
+                                                                            <span className="shrink-0 text-sm">⚠️</span>
+                                                                            <div>
+                                                                                <span className="font-bold text-yellow-700 block mb-0.5">Feedback:</span>
+                                                                                <p className="italic font-medium text-justify leading-relaxed">{currentAiFeedback.feedback}</p>
+                                                                            </div>
+                                                                        </div>
+                                                                    )}
+                                                                </div>
                                                             )}
                                                         </div>
                                                     )}
