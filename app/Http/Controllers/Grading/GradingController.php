@@ -11,6 +11,7 @@ use App\Models\Course;
 use App\Models\User;           
 use App\Models\StudentAnswer;  
 use App\Models\CourseProgress;
+use Illuminate\Support\Facades\DB;
 
 class GradingController extends Controller
 {
@@ -87,11 +88,28 @@ class GradingController extends Controller
         })
         ->get();
 
+        $aiLogs = DB::table('ai_interaction_logs')
+        ->join('primm_questions', 'ai_interaction_logs.primm_question_id', '=', 'primm_questions.id')
+        ->join('primms', 'primm_questions.primm_id', '=', 'primms.id')
+        ->where('ai_interaction_logs.user_id', $userId)
+        ->where('primms.course_id', $courseId)
+        ->select(
+            'ai_interaction_logs.id',
+            'ai_interaction_logs.primm_question_id',
+            'ai_interaction_logs.student_answer_text',
+            'ai_interaction_logs.ai_feedback',
+            'ai_interaction_logs.created_at',
+            'primm_questions.pertanyaan',
+            'primms.tahap',
+        )
+        ->orderBy('ai_interaction_logs.created_at', 'asc')
+        ->get();
 
         return Inertia::render('guru/nilai/detailJawaban', [
         'student' => $student,
         'answers' => $answers,
-        'currentMateri' => $course->title 
+        'currentMateri' => $course->title,
+        'aiLogs'       => $aiLogs, 
         ]);
     }
 
@@ -157,5 +175,45 @@ class GradingController extends Controller
             'student' => $student,
             'materials' => $courses,
         ]);
+    }
+
+    public function aiInteractionLogs($userId)
+{
+    $student = User::findOrFail($userId);
+
+    $logs = DB::table('ai_interaction_logs')
+        ->join('primm_questions', 'ai_interaction_logs.primm_question_id', '=', 'primm_questions.id')
+        ->join('primms', 'primm_questions.primm_id', '=', 'primms.id')
+        ->join('courses', 'primms.course_id', '=', 'courses.id')
+        ->where('ai_interaction_logs.user_id', $userId)
+        ->select(
+            'ai_interaction_logs.id',
+            'ai_interaction_logs.primm_question_id',
+            'ai_interaction_logs.student_answer_text',
+            'ai_interaction_logs.ai_feedback',
+            'ai_interaction_logs.is_valid',
+            'ai_interaction_logs.created_at',
+            'primm_questions.pertanyaan',
+            'primms.tahap',
+            'courses.title as course_title',
+            'courses.id as course_id',
+        )
+        ->orderBy('ai_interaction_logs.created_at', 'desc')
+        ->get();
+
+    return Inertia::render('guru/nilai/aiInteractionLogs', [
+        'student' => $student,
+        'logs'    => $logs,
+    ]);
+}
+
+public function resetAiInteraction($userId, $pertanyaan_id)
+    {
+        DB::table('ai_interaction_logs')
+            ->where('user_id', $userId)
+            ->where('primm_question_id', $pertanyaan_id)
+            ->delete();
+
+        return back()->with('success', 'Percobaan siswa berhasil direset.');
     }
 }

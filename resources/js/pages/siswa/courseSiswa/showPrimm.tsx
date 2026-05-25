@@ -55,10 +55,10 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
     
     const qActive = act?.questions[activeQuestionIdx];
     const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const currentAiFeedback = aiDraftFeedback?.hasMisconception === true
+    const currentAiFeedback = aiDraftFeedback?.feedback
     ? aiDraftFeedback
     : null;
-    const sendDraftToLaravel = async (textValue: string, questionId: number) => {
+    const sendDraftToLaravel = async (textValue: string, questionId: number, isManual: boolean = false, kodeSiswa: string = '') => {
         console.log('sendDraftToLaravel dipanggil, questionId:', questionId);
         
         if (!textValue || textValue.trim().length < 5 || isReviewMode || isBlockSubmitted) return;
@@ -66,23 +66,30 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
         if (!allowedSteps.includes(activeStep?.toLowerCase())) return;
 
         try {
-            const csrfToken = (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '';
-            
+            const getCsrfToken = () => {
+            const match = document.cookie.match(/XSRF-TOKEN=([^;]+)/);
+            return match ? decodeURIComponent(match[1]) : '';
+            };
+
             const res = await fetch(`/tasks/${questionId}/analyze-draft`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'X-CSRF-TOKEN': csrfToken,
+                    'X-XSRF-TOKEN': getCsrfToken(),
                     'Accept': 'application/json',
                 },
                 body: JSON.stringify({
                     answer: textValue,
-                    pertanyaan_id: questionId
+                    pertanyaan_id: questionId,
+                   kode_siswa: kodeSiswa,
+                    is_manual: isManual,
                 })
             });
 
             const data = await res.json();
             console.log('Response data:', data);
+
+            if (data.feedbackCount !== undefined) setCekCount(data.feedbackCount);
 
             setAiDraftFeedback({
                 ...data,
@@ -98,51 +105,18 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
 
     const handleTextareaChange = (qId: number, value: string) => {
         setAnswers(prev => ({ ...prev, [qId]: value }));
-
-        pendingDraftRef.current = { value, qId };
-
-        if (debounceTimerRef.current) {
-            clearTimeout(debounceTimerRef.current);
-        }
-
-        debounceTimerRef.current = setTimeout(() => {
-            if (pendingDraftRef.current) {
-                sendDraftToLaravel(pendingDraftRef.current.value, pendingDraftRef.current.qId);
-            }
-        }, 4000);
     };
 
     const handleTextareaBlur = (qId: number, value: string) => {
-        if (debounceTimerRef.current) {
-            clearTimeout(debounceTimerRef.current);
-        }
-        pendingDraftRef.current = { value, qId };
-        
-        debounceTimerRef.current = setTimeout(() => {
-            if (pendingDraftRef.current) {
-                sendDraftToLaravel(pendingDraftRef.current.value, pendingDraftRef.current.qId);
-            }
-        }, 1000);
+       setAnswers(prev => ({ ...prev, [qId]: value }));
     };
 
     const handleCodeEditorChange = (actIdx: number, qId: number, currentCode: string) => {
         setEditorCodes(prev => ({ ...prev, [actIdx]: currentCode }));
-
-        if (debounceTimerRef.current) {
-            clearTimeout(debounceTimerRef.current);
-        }
-
-        // 3. Set timer baru: AI membaca kode 1.5 detik setelah siswa jeda mengetik kode
-        debounceTimerRef.current = setTimeout(() => {
-            sendDraftToLaravel(currentCode, qId);
-        }, 1500); 
     };
 
     useEffect(() => {
         setAiDraftFeedback(null);
-        return () => {
-            if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
-        };
     }, [activeQuestionIdx, activeStep]);
 
     const stripHtml = (html: string) => {
@@ -438,12 +412,17 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
         });
     }; 
 
+    const [isCurrentStepReviewed, setIsCurrentStepReviewed] = useState(false);
+        useEffect(() => {
+            setIsCurrentStepReviewed(false);
+        }, [activeStep]);
+
     const handleSaveAndNext = () => {
         if (!act) return;
         const currentQuestion = act.questions[activeQuestionIdx];
         const isAnsweredInServer = !!(existingAnswers as any)?.[currentQuestion.id];
 
-        if (!isAnsweredInServer && !isJustSubmitted) {
+        if (!isAnsweredInServer && !isJustSubmitted && !isCurrentStepReviewed) {
             const isCodingStep = ['modify', 'make'].includes(activeStep);
             const currentAnswer = answers[currentQuestion.id];
 
@@ -470,6 +449,7 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
 
         const isLastBlockInStep = currentActivityIdx === activities.length - 1;
         const isLastQuestionInBlock = activeQuestionIdx === act.questions.length - 1;
+        const isAbsoluteLastQuestionInStep = isLastBlockInStep && isLastQuestionInBlock;
 
         if (activeStep === 'predict') {
             if (!isLastQuestionInBlock) {
@@ -513,22 +493,44 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                     }
                 }
             } else {
+                if (!isCurrentStepReviewed) {
+            // Jika siswa MASIH dalam fase menjawab soal (belum masuk fase lihat pembahasan)
+            if (!isLastQuestionInBlock) {
+                setActiveQuestionIdx(prev => prev + 1);
+            } else if (!isLastBlockInStep) {
+                setActiveQuestionIdx(0);
+                setCurrentActivityIdx(prev => prev + 1);
+            } else {
+                // TEPAT SETELAH SOAL TERAKHIR DI-SUBMIT:
+                // Nyalakan mode review tahap, lalu lempar balik siswa ke Blok 1 dan Soal 1
+                setIsCurrentStepReviewed(true);
+                setCurrentActivityIdx(0);
+                setActiveQuestionIdx(0);
+            }
+        }else {
                 if (!isLastQuestionInBlock) {
                     setActiveQuestionIdx(prev => prev + 1);
                 } else if (!isLastBlockInStep) {
                     setActiveQuestionIdx(0);
                     setCurrentActivityIdx(prev => prev + 1);
                 } else {
+                    const isStepFullyAnswered = activities.every(activity => 
+                        activity.questions.every(question => !!(existingAnswers as any)?.[question.id])
+                    );
+
+                    if (!isStepFullyAnswered) {
+                        return;
+                    }
                     const nextStep = steps[currentStep + 1];
                     if (nextStep) {
                         window.speechSynthesis.cancel();
                         router.visit(`/siswa/courseSiswa/showPrimm/${course.id}/${nextStep}`);
                     } else {
-                        // Jika sudah di ujung tahap 'MAKE', panggil fungsi selesai
                         handleFinalComplete(); 
                     }
                 }
             }
+        }
         }
     };
 
@@ -537,7 +539,38 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
         router.visit(`/siswa/courseSiswa/showPrimm/${course.id}/investigate?review=true`);
     };
 
+    const [cekCount, setCekCount] = useState<number>(0);
+    const [chatCount, setChatCount] = useState<number>(0);
+    const [isLoadingAI, setIsLoadingAI] = useState<boolean>(false);
+    const [showFeedbackLayout, setShowFeedbackLayout] = useState<boolean>(false);
+    const [isFeedbackLoading, setIsFeedbackLoading] = useState<boolean>(false);
 
+    useEffect(() => {
+        setShowFeedbackLayout(false);
+        setAiDraftFeedback(null);
+
+        if (!qActive?.id) {
+            setCekCount(0);
+            setChatCount(0);
+            return;
+        }
+
+        const fetchStatus = async () => {
+            try {
+                const res  = await fetch(`/tasks/${qActive.id}/check-status`);
+                const data = await res.json();
+                setCekCount(data.feedbackCount ?? 0);
+                setChatCount(data.chatCount ?? 0);
+                if (data.feedbackCount > 0) setShowFeedbackLayout(true);
+            } catch (e) {
+                console.error('checkStatus error:', e);
+                setCekCount(0);
+                setChatCount(0);
+            }
+        };
+
+        fetchStatus();
+    }, [qActive?.id, currentStep, currentActivityIdx]);
 
     return (
         <div className=" h-screen w-full bg-[#F8FAFC] flex flex-col overflow-hidden">
@@ -598,20 +631,16 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                                         extensions={[python()]} 
                                         readOnly={!['modify', 'make'].includes(activeStep) || isBlockSubmitted || isAllFinished} 
                                         onChange={(val: string) => {
-                                            // Ambil ID pertanyaan aktif sebagai jangkar/anchor konteks database
                                             const qId = act?.questions[activeQuestionIdx]?.id;
                                             if (qId) {
                                                 handleCodeEditorChange(currentActivityIdx, qId, val);
                                             } else {
-                                                // Fail-safe jika tidak ada id pertanyaan di block tersebut
                                                 setEditorCodes(prev => ({ ...prev, [currentActivityIdx]: val }));
                                             }
                                         }} 
                                         height="100%"
                                         className="text-sm h-full"
                                     />
-
-                                   
                                 </div>
                             </div>
 
@@ -666,13 +695,17 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
 
                                         return (
                                             <div key={q.id} className="bg-white rounded-[25px] border border-gray-200 shadow-sm overflow-hidden animate-in slide-in-from-right duration-500">
-                                                <div className="bg-gray-50/50 p-6 border-b flex items-start gap-4">
+                                                <div className="bg-gray-50/50 p-6 border-b flex items-start gap-4 select-none">
                                                     <div className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center text-sm font-black shrink-0 shadow-lg shadow-blue-100">
                                                         {activeQuestionIdx + 1}
                                                     </div>
                                                     <div className="flex-1">
                                                         <span className="text-[12px] font-black text-blue-500 uppercase tracking-widest block mb-1">Pertanyaan</span>
-                                                        <p className="text-[15px] font-bold text-gray-700 leading-relaxed whitespace-pre-wrap text-justify">
+                                                        <p onCopy={(e) => {
+                                                            e.preventDefault(); 
+                                                            alert('Maaf, teks pertanyaan tidak dapat disalin!'); // Opsional: Beri peringatan ke user
+                                                        }}
+                                                        className="text-[15px] font-bold text-gray-700 leading-relaxed whitespace-pre-wrap text-justify">
                                                             {q.pertanyaan}
                                                         </p>
                                                     </div>
@@ -716,13 +749,32 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                                                                         placeholder="Tuliskan jawabanmu di sini..."
                                                                     />
 
-                                                                    {/* CONTAINER DYNAMIC FEEDBACK RADAR GURU FASILITATOR AI */}
-                                                                    {currentAiFeedback && currentAiFeedback.hasMisconception && (
+                                                                    {showFeedbackLayout && (isFeedbackLoading || (currentAiFeedback && currentAiFeedback.feedback)) && (
                                                                         <div className="mt-3 p-4 border-l-4 border-yellow-500 bg-yellow-50 text-yellow-900 rounded-r-2xl text-xs font-semibold flex gap-2 items-start animate-in slide-in-from-top-2 duration-300">
-                                                                            <span className="shrink-0 text-sm">⚠️</span>
-                                                                            <div>
-                                                                                <span className="font-bold text-yellow-700 block mb-0.5">Feedback:</span>
-                                                                                <p className="italic font-medium text-justify leading-relaxed">{currentAiFeedback.feedback}</p>
+                                                                            <span className="shrink-0 text-sm">
+                                                                                {isFeedbackLoading ? "⏳" : "💡"}
+                                                                            </span>
+                                                                            <div className="w-full">
+                                                                                <span className="font-bold text-yellow-700 block mb-1">
+                                                                                    Bimbingan AI (Petunjuk {cekCount}/3):
+                                                                                </span>
+                                                                                
+                                                                                {isFeedbackLoading ? (
+                                                                                    // --- SKELETON ANIMASI INSTAN (Menunggu Backend) ---
+                                                                                    <div className="space-y-2 py-1 animate-pulse">
+                                                                                        <div className="h-3 bg-yellow-200/70 rounded-full w-11/12"></div>
+                                                                                        <div className="h-3 bg-yellow-200/70 rounded-full w-full"></div>
+                                                                                        <div className="h-3 bg-yellow-200/70 rounded-full w-4/5"></div>
+                                                                                        <p className="text-[10px] text-yellow-600/80 italic mt-2 block">
+                                                                                            Tutor AI sedang menelaah logika jawabanmu...
+                                                                                        </p>
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    // --- TEKS PETUNJUK ASLI (Muncul setelah fetch selesai) ---
+                                                                                    <p className="italic font-medium text-justify leading-relaxed whitespace-pre-wrap animate-in fade-in duration-500">
+                                                                                        {currentAiFeedback?.feedback}
+                                                                                    </p>
+                                                                                )}
                                                                             </div>
                                                                         </div>
                                                                     )}
@@ -731,7 +783,7 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                                                         </div>
                                                     )}
 
-                                                    {isReviewMode && !['predict', 'run'].includes(activeStep) && (
+                                                    {(isReviewMode || isCurrentStepReviewed) && !['predict', 'run'].includes(activeStep) && (
                                                         <div 
                                                         className="mt-4 p-6 bg-blue-50 border-l-4 border-blue-500 rounded-r-2xl w-full h-auto"
                                                         > 
@@ -830,7 +882,70 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                 </div>
 
                 <div className="flex items-center gap-4 mr-24">
-                    <button 
+                    {act && act.questions.length > 0 && 
+                        ['investigate', 'modify', 'make'].includes(activeStep.toLowerCase()) &&
+                        !((existingAnswers as any)?.[act.questions[activeQuestionIdx]?.id]) && 
+                        !isJustSubmitted && 
+                        !isReviewMode && (
+                            <button
+                                type="button"
+                                disabled={cekCount >= 3 || isFeedbackLoading}
+                                onClick={async () => {
+                                    if (cekCount >= 3 || isFeedbackLoading) return;
+
+                                    const currentQuestion = act.questions[activeQuestionIdx];
+                                    const isCodingStep = ['modify', 'make'].includes(activeStep);
+                                    const currentAnswer = answers[currentQuestion.id] || "";
+                                    const currentCode = editorCodes[currentActivityIdx] || "";
+
+                                    if (isCodingStep && !currentCode.trim()) {
+                                        alert("Harap modifikasi atau tulis kode programmu terlebih dahulu.");
+                                        return;
+                                    }
+                                    if (!isCodingStep && !currentAnswer.trim()) {
+                                        alert("Harap isi jawabanmu terlebih dahulu.");
+                                        return;
+                                    }
+
+                                    if (debounceTimerRef.current) {
+                                        clearTimeout(debounceTimerRef.current);
+                                    }
+
+                                    setShowFeedbackLayout(true);
+                                    setIsFeedbackLoading(true);
+
+                                    const dataDikirim = isCodingStep ? currentCode : currentAnswer;
+                                    
+                                    try {
+                                 
+                                        await sendDraftToLaravel(dataDikirim, currentQuestion.id, true);
+                                    } catch (error) {
+                                        console.error(error);
+                                    } finally {
+                         
+                                        setIsFeedbackLoading(false);
+                                    }
+                                }}
+                                className={`px-4 py-2 rounded-[15px] font-bold text-sm flex items-center gap-2 transition-all active:scale-95 shadow-lg ${
+                                    cekCount >= 3 || isFeedbackLoading
+                                        ? 'bg-gray-100 text-gray-400 border border-gray-200 shadow-none cursor-not-allowed'
+                                        : 'bg-amber-500 hover:bg-amber-600 text-white shadow-amber-100'
+                                }`}
+                            >
+                                {isFeedbackLoading ? (
+                                    <>
+                                        <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                                        Membaca...
+                                    </>
+                                ) : cekCount >= 3 ? (
+                                    "🔒 Cek Selesai"
+                                ) : (
+                                    `💡 Cek Jawaban (${cekCount}/3)`
+                                )}
+                            </button>
+                        )
+                    }
+                        <button 
                         onClick={handleSaveAndNext} 
                         className={`
                             px-4 py-2 rounded-[15px] font-bold text-sm flex items-center gap-2 
@@ -844,9 +959,9 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                         {(() => {
                             const isAnsweredInServer = !!(existingAnswers as any)?.[act?.questions[activeQuestionIdx]?.id];
                             const isFinalSoal = currentActivityIdx === activities.length - 1 && activeQuestionIdx === act.questions.length - 1;
-                            const isLastStep = currentStep === steps.length - 1; // Tahap 'make'
+                            const isLastStep = currentStep === steps.length - 1; 
 
-                            if (!isAnsweredInServer && !isJustSubmitted) {
+                            if (!isAnsweredInServer && !isJustSubmitted && !isCurrentStepReviewed) {
                                 return "Simpan Jawaban";
                             }
 
@@ -857,39 +972,46 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                                 return "Pembahasan Selanjutnya";
                             }
 
-                            if (isFinalSoal) {
-                                if (['predict', 'run'].includes(activeStep)) {
+                            if (isCurrentStepReviewed) {
+                                if (isFinalSoal) {
+                                    const nextTargetStep = steps[currentStep + 1];
+                                    return nextTargetStep ? `Lanjut ke Tahap ${nextTargetStep.toUpperCase()}` : "Selesaikan Pembelajaran";
+                                }
+                                return "Pembahasan Soal Selanjutnya";
+                            }
+
+                            // 4. Kondisi transisi tepat ketika soal paling terakhir di-submit (Pemicu untuk balik ke soal pertama)
+                            if (isFinalSoal && !isCurrentStepReviewed) {
+                                // Tahap predict dan run tidak ada reviu pembahasan per nomor, jadi langsung lanjut tahap
+                                if (['predict', 'run'].includes(activeStep?.toLowerCase())) {
                                     const nextTarget = activeStep === 'predict' ? 'RUN' : 'INVESTIGATE';
                                     return `Lanjut ke Tahap ${nextTarget}`;
                                 }
-
-                                const nextTargetStep = steps[currentStep + 1];
-                                if (nextTargetStep) {
-                                    return `Lanjut ke Tahap ${nextTargetStep.toUpperCase()}`;
-                                } else {
-                                    return "Selesaikan Pembelajaran";
-                                }
+                                return "Lihat Pembahasan Tahap Ini";
                             }
 
+                            // 5. Kondisi navigasi antar-soal biasa saat siswa masih proses menjawab soal
                             return "Lanjut ke Soal Berikutnya";
                         })()}
                     </button>
                 </div>
             </footer>
 
-            {subView === 'aktivitas' && !isReviewMode && ( 
-                act?.questions?.length > 0 && 
-                ['investigate', 'modify', 'make'].includes(activeStep.toLowerCase()) && (
-                    <div className="fixed bottom-14 right-15 z-[100] transition-all duration-500 ease-out animate-in slide-in-from-bottom-10">
-                        <ChatAI 
-                            key={act.questions[activeQuestionIdx].id} 
-                            pertanyaanId={act.questions[activeQuestionIdx].id}
-                            hintUrl={hintUrl}
-                            activeStep={activeStep}
-                        />
-                    </div>
-                )
-            )}
+           {subView === 'aktivitas' && !isReviewMode && !isCurrentStepReviewed && 
+                    act?.questions?.length > 0 && 
+                    ['investigate', 'modify', 'make'].includes(activeStep.toLowerCase()) &&
+                    !((existingAnswers as any)?.[act.questions[activeQuestionIdx]?.id]) &&
+                    !isJustSubmitted && (
+                        <div className="fixed bottom-14 right-15 z-[100] transition-all duration-500 ease-out animate-in slide-in-from-bottom-10">
+                            <ChatAI 
+                                key={act.questions[activeQuestionIdx].id} 
+                                pertanyaanId={act.questions[activeQuestionIdx].id}
+                                hintUrl={hintUrl}
+                                activeStep={activeStep}
+                            />
+                        </div>
+                    )
+                }
 
             {showSuccessModal && (
                 <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[100] flex items-center justify-center p-4 animate-in fade-in duration-300">
@@ -898,12 +1020,6 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                         <h2 className="text-2xl font-black text-gray-900 uppercase tracking-tight mb-2">Hore! Selesai</h2>
                         <p className="text-gray-500 text-sm mb-8">Kamu telah menuntaskan tantangan PRIMM materi ini.</p>
                         <div className="flex flex-col gap-3">
-                            <button 
-                                onClick={handleStartReview}
-                                className="flex items-center justify-center gap-2 bg-blue-600 text-white py-4 rounded-2xl font-bold text-[11px] uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg shadow-blue-100"
-                            >
-                                <BookOpen size={18} /> Lihat Pembahasan & Jawaban
-                            </button>
                             {course.link_drive && (
                                 <a href={course.link_drive} target="_blank" className="flex items-center justify-center gap-2 bg-emerald-600 text-white py-4 rounded-2xl font-bold text-xs uppercase tracking-widest hover:bg-emerald-700 transition-all"><ExternalLink size={18} /> Unduh Materi Lengkap</a>
                             )}

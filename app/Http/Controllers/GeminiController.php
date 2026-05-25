@@ -7,334 +7,564 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Session;
+use Illuminate\Support\Facades\Auth;
 
 class GeminiController extends Controller
 {
-    // =========================================================================
-    // FITUR 1: FITUR CHAT DUA ARAH (KODE LAMA KAMU - TETAP DIPERTAHANKAN)
-    // =========================================================================
+    public function checkStatus(Request $request, int $pertanyaan_id)
+    {
+        $userId = Auth::id();
+
+        $feedbackCount = DB::table('ai_interaction_logs')
+            ->where('user_id', $userId)
+            ->where('primm_question_id', $pertanyaan_id)
+            ->count();
+
+        $chatCount = Session::get('chat_count_' . $pertanyaan_id, 0);
+
+        return response()->json([
+            'feedbackCount' => $feedbackCount,
+            'cekLocked'     => $feedbackCount >= 3,
+            'chatCount'     => $chatCount,
+            'chatLocked'    => $chatCount >= 3,
+        ]);
+    }
+
     public function getHint(Request $request)
     {
         $request->validate([
-            'question' => 'required|string',
-            'pertanyaan_id' => 'required|integer', 
+            'question'      => 'required|string',
+            'pertanyaan_id' => 'required|integer',
+            'kode_siswa'    => 'nullable|string'
         ]);
+
+        $jawabanAI = null;
 
         try {
             $data = DB::table('primm_questions')
                 ->join('primms', 'primm_questions.primm_id', '=', 'primms.id')
-                ->select('primm_questions.pembahasan', 'primm_questions.pertanyaan', 'primms.tahap', 'primms.kode_program')
+                ->select(
+                    'primm_questions.pembahasan',
+                    'primm_questions.pertanyaan',
+                    'primms.tahap',
+                    'primms.kode_program'
+                )
                 ->where('primm_questions.id', $request->pertanyaan_id)
                 ->first();
 
-            if (!$data) {
-                return back()->with('error', 'Konteks soal tidak ditemukan.');
-            }
+            if (!$data) return back()->with('error', 'Konteks soal tidak ditemukan.');
 
-            $sessionKey = 'chat_count_' . $request->pertanyaan_id;
-            
-            if (empty($request->history)) {
-                Session::forget($sessionKey);
-            }
+            $sessionKey  = 'chat_count_' . $request->pertanyaan_id;
+            if (empty($request->history)) Session::forget($sessionKey);
 
-            $jumlahChatSiswa = Session::get($sessionKey, 0);
-            $interaksiKe = $jumlahChatSiswa + 1;
+            $jumlahChat  = Session::get($sessionKey, 0);
+            $interaksiKe = $jumlahChat + 1;
+
+            if ($jumlahChat >= 3) {
+                return back()->with('aiResponse',
+                    'Kamu sudah mendapat 3 diskusi AI. Coba pelajari materi nya yaa!. 💪'
+                );
+            }
 
             $formattedHistory = [];
             foreach ($request->history ?? [] as $msg) {
-                $role = ($msg['role'] === 'bot' || $msg['role'] === 'assistant') ? 'assistant' : 'user';
-                $formattedHistory[] = [
-                    'role' => $role,
-                    'content' => $msg['content']
-                ];
+                $role               = ($msg['role'] === 'bot' || $msg['role'] === 'assistant') ? 'assistant' : 'user';
+                $formattedHistory[] = ['role' => $role, 'content' => $msg['content']];
             }
-
             if (!empty($formattedHistory) && end($formattedHistory)['content'] === $request->question) {
                 array_pop($formattedHistory);
             }
 
+            $tahapKonteks = match(strtolower(trim($data->tahap))) {
+
+            'investigate' => "
+            TAHAP: INVESTIGATE
+            Tujuan: Siswa memahami CARA KERJA kode yang sudah ada —
+            alur eksekusi, peran setiap bagian, dan hubungan sebab-akibat di dalamnya.
+
+            Strategi bimbingan:
+
+            LANGKAH 1 — jika ini diskusi pertama atau siswa belum mengarah ke bagian yang relevan:
+            Arahkan perhatian siswa ke bagian kode yang paling berkaitan dengan pertanyaan.
+            Sebutkan elemen spesifik (misalnya variabel, fungsi, kondisi, perulangan, atau output), tapi jangan bocorkan jawabannya.
+
+            Contoh pola:
+            'Coba perhatikan bagian [X] di kode kamu — menurutmu, bagian itu sedang berperan sebagai apa?'
+            'Kalau melihat [X], menurutmu bagian itu berhubungan dengan hasil yang muncul?'
+
+            LANGKAH 2 — jika siswa sudah melihat bagian yang benar tapi belum paham prosesnya:
+            WAJIB tanggapi dulu inti jawaban siswa dengan menyebut apa yang sudah ia amati.
+            Lalu bantu siswa menelusuri jalannya program langkah demi langkah.
+            Fokuskan pada perubahan nilai, urutan eksekusi, atau hubungan kode dengan output.
+
+            Contoh pola:
+            'Oke, kamu sudah melihat [X] — sekarang coba pikirkan, saat bagian itu dijalankan, apa yang terjadi?'
+            'Setelah [X] diproses, menurutmu apa yang berubah?'
+            'Menurutmu, bagian mana yang menentukan kenapa hasilnya bisa seperti itu?'
+            'Apakah ada sesuatu yang berubah setiap putaran, atau justru tetap sama?'
+
+            LANGKAH 3 — jika siswa sudah mulai memahami polanya:
+            WAJIB tanggapi dulu jawaban siswa dengan mengulang inti pemikirannya.
+            Lalu dorong siswa merangkai sendiri penjelasan lengkapnya.
+            Jangan tambah petunjuk baru.
+
+            Contoh pola:
+            'Jadi menurutmu, [ulang inti jawaban siswa].'
+            'Nah, dari situ coba simpulkan sendiri, apa yang sebenarnya terjadi di kode kamu.'
+
+            PENTING — berlaku di semua langkah:
+            - Jika jawaban siswa meleset atau belum jelas, jangan lanjut ke langkah berikutnya.
+            Gali dulu maksudnya: 'Maksud kamu [ulang jawaban siswa] — bisa dijelaskan lebih lanjut?'
+            - Jika siswa sudah mengarah ke jawaban yang tepat lebih awal, langsung dorong ke sintesis.
+            - Jangan meminta siswa mengubah atau membuat kode baru.
+            - Jangan memberi jawaban langsung.
+            ",
+
+            'modify' => "
+            TAHAP: MODIFY
+            Tujuan: Membimbing siswa menemukan sendiri perubahan yang dibutuhkan program agar sesuai dengan target soal.
+
+            Strategi:
+            - Berikan SATU petunjuk konseptual berdasarkan kebutuhan baru pada soal.
+            - Arahkan siswa berpikir: program sekarang belum bisa apa, lalu apa yang dibutuhkan agar bisa melakukan itu.
+            - Fokus pada kebutuhan logika program, bukan langsung pada sintaks.
+            - Jangan menyebut solusi atau nama fungsi secara langsung.
+
+            Contoh gaya:
+            - Jika diminta agar nilai dimasukkan pengguna:
+            'Kalau pengguna harus bisa menentukan nilainya sendiri, menurutmu program perlu bisa melakukan apa dulu?'
+
+            - Jika diminta menghitung total:
+            'Kalau setiap nilai ingin digabung menjadi satu hasil akhir, apa yang perlu dilakukan pada setiap nilai yang masuk?'
+
+            - Jika diminta menampilkan hasil akhir:
+            'Setelah semua proses selesai, informasi apa yang perlu ditunjukkan kepada pengguna?'
+
+            - Jika diminta mengubah jumlah pengulangan:
+            'Kalau banyaknya pengulangan ingin berbeda, bagian mana yang mengatur berapa kali proses berjalan?'
+
+            PENTING:
+            - Petunjuk harus menyoroti kebutuhan baru dari soal.
+            - Jangan langsung menunjuk sintaks atau memberi jawaban.
+            - Bantu siswa menyadari apa yang harus bisa dilakukan program sebelum memikirkan cara menulis kodenya.
+            ",
+
+            'make' => "
+            TAHAP: MAKE
+            Tujuan: Membimbing siswa mulai menyusun program sendiri tanpa memberi solusi langsung.
+
+            Strategi:
+            - Berikan SATU petunjuk konseptual berdasarkan kebutuhan paling awal dari soal.
+            - Arahkan siswa memikirkan apa yang harus disiapkan atau diketahui program terlebih dahulu.
+            - Fokus pada urutan logika: input → proses → hasil.
+            - Jangan menyebut sintaks atau memberi kerangka kode.
+
+            Contoh gaya:
+            - Jika program perlu menerima beberapa nilai:
+            'Sebelum menghitung apa pun, pikirkan dulu data apa saja yang perlu dimasukkan ke program.'
+
+            - Jika program perlu menghitung total:
+            'Kalau beberapa nilai ingin digabung menjadi satu jumlah, apa yang perlu dilakukan pada setiap nilai yang masuk?'
+
+            - Jika program perlu menghitung rata-rata:
+            'Setelah total didapat, informasi apa lagi yang dibutuhkan agar bisa mencari rata-ratanya?'
+
+            - Jika program perlu mengecek kondisi:
+            'Setelah hasil perhitungan didapat, bagaimana program bisa menentukan apakah hasil itu memenuhi syarat tertentu?'
+
+            PENTING:
+            - Berikan hanya SATU petunjuk, sesuai langkah yang paling awal dibutuhkan siswa.
+            - Jangan langsung menyebut nama fungsi, perintah, atau struktur program.
+            - Jangan memberi urutan langkah lengkap; cukup bantu siswa menemukan langkah berikutnya sendiri.
+            ",
+
+            default => "
+                TAHAP: UMUM
+                Tujuan: Bantu siswa memahami konsep inti dari soal.
+                Strategi: Sesuaikan bimbingan dengan konteks kode dan soal yang tersedia."
+        };
+
+        $systemPrompt = "Kamu adalah Tutor Sokrates untuk siswa SMK Kelas 10.
+        Bahasa: santai, hangat, panggil siswa dengan 'kamu'.
+        Tugasmu BUKAN menjawab — tugasmu membantu siswa menemukan jawabannya sendiri lewat pertanyaan.
+
+        ════════════════════════════════════
+        KONTEKS SESI
+        ════════════════════════════════════
+        {$tahapKonteks}
+
+        Soal yang dihadapi siswa : \"{$data->pertanyaan}\"
+        Konsep target           : \"{$data->pembahasan}\"
+        Kode program siswa      :{$data->kode_program}
+        Kode Siswa (ditulis di editor): \n{$request->kode_siswa}
+
+        Diskusi saat ini : ke-{$interaksiKe}
+        - Diskusi 1-3 : bimbingan bertahap sesuai strategi tahap
+        - Diskusi 4   : evaluasi jawaban siswa dari diskusi ke-3.
+        Nilai apakah jawaban siswa benar atau meleset, lalu tutup sesi dengan mendorong
+        siswa menulis kesimpulan sendiri. Jangan beri pertanyaan baru.
+
+        ════════════════════════════════════
+        ATURAN MUTLAK — berlaku di semua tahap & diskusi
+        ════════════════════════════════════
+        1. DILARANG memberi jawaban, nama fungsi, atau struktur solusi secara langsung.
+        2. DILARANG menyebut istilah atau perintah teknis sebelum siswa menyebutnya duluan.
+        3. Setiap respons HARUS merujuk ke soal atau kode siswa secara konkret.
+        4. Satu respons = satu pertanyaan. Tidak lebih.
+        5. Jangan beri pujian berlebihan — tetap fokus ke proses berpikir siswa.
+        6. Sebelum melanjutkan ke langkah bimbingan berikutnya, SELALU tanggapi
+        jawaban siswa terlebih dahulu — akui apa yang sudah benar, dan gali
+        lebih dalam apa yang masih kurang, baru arahkan ke pertanyaan berikutnya.
+        7. Strategi bimbingan per diskusi adalah PANDUAN ARAH, bukan script wajib.
+        Sesuaikan dengan jawaban siswa — jika siswa sudah mengarah ke konsep
+        yang benar lebih awal, tidak perlu menunggu diskusi ke-3 untuk mendorong sintesis.
+        8. Jangan pernah mengabaikan isi jawaban siswa. Respons harus selalu
+        terhubung langsung dengan apa yang baru saja siswa katakan.
+
+        ════════════════════════════════════
+        EVALUASI DI AKHIR DISKUSI KE-3
+        ════════════════════════════════════
+        Setelah siswa menjawab di diskusi ke-3, evaluasi jawabannya:
+
+        JIKA BENAR atau mendekati benar:
+        → 'Pemahamanmu sudah bagus sejauh ini!'
+
+        JIKA MASIH KURANG atau meleset:
+        → Coba baca ulang soalnya pelan-pelan atau pahami materi nya'";
+
             $providers = [];
-            foreach (['GROQ_API_KEY'] as $envKey) {
-                if ($key = env($envKey)) {
-                    $providers[] = ['type' => 'groq', 'key' => $key];
-                }
-            }
-            foreach (['DEEPSEEK_API_KEY'] as $envKey) {
-                if ($key = env($envKey)) {
-                    $providers[] = ['type' => 'deepseek', 'key' => $key];
-                }
-            }
+            if ($key = env('GROQ_API_KEY'))     $providers[] = ['type' => 'groq',     'key' => $key];
+            if ($key = env('DEEPSEEK_API_KEY')) $providers[] = ['type' => 'deepseek', 'key' => $key];
 
-            if (empty($providers)) {
-                return back()->with('error', 'API Key tidak dikonfigurasi di .env');
-            }
-
-            $systemPrompt = "Kamu adalah Tutor AI interaktif yang ramah, santai, dan SANGAT SINGKAT untuk siswa SMK Kelas 10. Tugasmu membimbing siswa menemukan jawaban secara mandiri dengan metode scaffolding langkah demi langkah — TANPA memberi jawaban langsung, TANPA membocorkan kunci jawaban, dan TANPA membuat kesimpulan.
-
-            KONTEKS INTERAKSI:
-            - Tahap Bimbingan Saat Ini: {$data->tahap}
-            - Pertanyaan Siswa/Soal: \"{$data->pertanyaan}\"
-            - Kode Program: 
-            {$data->kode_program}
-            - Konsep Target Pemahaman: \"{$data->pembahasan}\"
-            - Urutan Interaksi Ke: {$interaksiKe}
-
-            BATASAN RESPONS (MUTLAK & KETAT):
-            1. WAJIB MAKSIMAL 2 KALIMAT PENDEK per respons. Jangan bertele-tele, jangan membuat penjelasan panjang, dan jangan berparagraf-paragraf.
-            2. DILARANG KERAS memberikan jawaban langsung atau membocorkan cara kerja elemen kode di kolom \"{$data->pembahasan}\".
-
-            STRATEGI SCAFFOLDING LANGSUNG PADA INTI:
-            1. Jika soal meminta penjelasan (Proses/Fungsi/Alasan): Jangan beri penjelasannya. Pancing siswa memberikan pendapat/dugaan awal mereka mengenai elemen tersebut dan suruh mereka melihat elemen di sekitarnya.
-            2. DILARANG menggunakan pertanyaan menuntun (leading questions) yang di dalam kalimat pertanyaannya sudah membocorkan peran/cara kerja elemen (Contoh dilarang: 'Apakah i bertindak sebagai penampung nilai?'). Gunakan pertanyaan terbuka (Contoh: 'Menurutmu, apa tugas huruf i di baris tersebut?').
-            3. Jika siswa menjawab singkat (Contoh: 'ya', 'berubah', 'ada in'): Jangan beri petunjuk baru. Paksa siswa untuk menjelaskan detail dari jawaban singkatnya (Misal: 'Nah, di sebelah mana berubahnya? Coba jelaskan alasanmu!').
-            4. Jika siswa memberikan kemajuan informasi: Akui jawaban mereka, lalu bimbing selangkah lebih dekat ke target tanpa membocorkan langkah berikutnya.
-            5. Jika jawaban siswa kurang tepat atau salah: JANGAN mengoreksi isi jawaban secara langsung, JANGAN menyebutkan jawaban yang benar. Katakan bahwa ada bagian yang perlu diperhatikan kembali, lalu arahkan siswa untuk mengamati bagian kode yang relevan dan berpikir ulang.
-            EVALUASI AKHIR CHAT:
-            - Jika jawaban siswa sudah tepat sesuai \"{$data->pembahasan}\": JANGAN memberikan pertanyaan baru. Langsung ketik kalimat persis tanpa tambahan kata lain: 'Tulis kesimpulanmu di kolom jawaban sekarang. 💪'
-
-            PANDUAN BAHASA & ANTI-SPOILER:
-            1. Gunakan gaya bahasa tutor yang mengalir, alami, hangat, dan panggil 'kamu'.
-            2. JANGAN PERNAH menyebut istilah teknis pemrograman (seperti: perulangan, loop, iterasi, array, variabel, counter, range) sebelum siswa menuliskannya sendiri di dalam chat.";
+            if (empty($providers)) return back()->with('error', 'API Key tidak dikonfigurasi.');
 
             $jawabanAI = null;
-
             foreach ($providers as $provider) {
                 try {
-                    $response = null;
+                    $endpoint = $provider['type'] === 'groq'
+                        ? 'https://api.groq.com/openai/v1/chat/completions'
+                        : 'https://api.deepseek.com/chat/completions';
+                    $model = $provider['type'] === 'groq'
+                        ? env('GROQ_MODEL', 'llama-3.3-70b-versatile')
+                        : env('DEEPSEEK_MODEL', 'deepseek-chat');
 
-                    if ($provider['type'] === 'groq') {
-                        $response = Http::withoutVerifying()->timeout(20)
-                            ->withToken($provider['key'])
-                            ->post('https://api.groq.com/openai/v1/chat/completions', [
-                                'model' => env('GROQ_MODEL', 'llama-3.3-70b-versatile'),
-                                'messages' => array_merge(
-                                    [['role' => 'system', 'content' => $systemPrompt]],
-                                    $formattedHistory,
-                                    [['role' => 'user', 'content' => $request->question]]
-                                ),
-                                'temperature' => 0.2,
-                                'max_tokens' => 300,
-                            ]);
+                    $response = Http::withoutVerifying()->timeout(20)
+                        ->withToken($provider['key'])
+                        ->post($endpoint, [
+                            'model'    => $model,
+                            'messages' => array_merge(
+                                [['role' => 'system', 'content' => $systemPrompt]],
+                                $formattedHistory,
+                                [['role' => 'user', 'content' => $request->question]]
+                            ),
+                            'temperature' => 0.5,
+                            'max_tokens'  => 120,
+                        ]);
 
-                        if ($response->successful()) {
-                            $jawabanAI = $response->json()['choices'][0]['message']['content'] ?? null;
-                        }
-
-                    } elseif ($provider['type'] === 'deepseek') {
-                        $response = Http::withoutVerifying()->timeout(25)
-                            ->withToken($provider['key'])
-                            ->post('https://api.deepseek.com/chat/completions', [
-                                'model' => env('DEEPSEEK_MODEL', 'deepseek-chat'),
-                                'messages' => array_merge(
-                                    [['role' => 'system', 'content' => $systemPrompt]],
-                                    $formattedHistory,
-                                    [['role' => 'user', 'content' => $request->question]]
-                                ),
-                                'temperature' => 0.2,
-                                'max_tokens' => 300,
-                            ]);
-
-                        if ($response->successful()) {
-                            $jawabanAI = $response->json()['choices'][0]['message']['content'] ?? null;
+                    if ($response->successful()) {
+                        $jawabanAI = $response->json()['choices'][0]['message']['content'] ?? null;
+                        if ($jawabanAI) {
+                            Session::put($sessionKey, $interaksiKe);
+                            break;
                         }
                     }
-
-                    if (Session::isStarted()) {
-                        Session::put($sessionKey, $interaksiKe);
-                    }
-
-                    $statusCode = $response?->status() ?? 'No Response';
-                    Log::warning("Provider {$provider['type']} gagal (Status: {$statusCode}), mencoba provider berikutnya...");
-
+                    Log::warning("getHint: provider {$provider['type']} gagal (Status: {$response->status()})");
                 } catch (\Exception $e) {
-                    Log::error("Gagal pada provider {$provider['type']}: " . $e->getMessage());
-                    continue;
+                    Log::error("getHint error: " . $e->getMessage());
                 }
             }
 
             if ($jawabanAI) {
+                if ($interaksiKe >= 3) {
+                    $jawabanAI .= "\n\n💪 Kamu sudah mendapat 3 diskusi AI. Coba simpulkan sendiri percakapannya dan pelajari lagi materi nya yaa!";
+                }
                 return back()->with('aiResponse', $jawabanAI);
             }
 
-            return back()->with('error', 'Tutor sedang sangat ramai, coba tanyakan ke guru atau pelajari materi yaa!');
+            return back()->with('error', 'Tutor sedang sibuk, coba lagi sebentar ya!');
 
         } catch (\Exception $e) {
-            Log::error("Sistem Error: " . $e->getMessage());
-            return back()->with('error', 'Terjadi kesalahan sistem pada server AI.');
+            Log::error("getHint sistem error: " . $e->getMessage());
+            return back()->with('error', 'Terjadi kesalahan pada server AI.');
         }
     }
 
     public function analyzeDraftAnswer(Request $request)
     {
         $request->validate([
-            'answer' => 'required|string',
-            'pertanyaan_id' => 'required|integer', 
+            'answer'        => 'required|string',
+            'pertanyaan_id' => 'required|integer',
+            'is_manual'     => 'boolean',
+            'kode_siswa'    => 'nullable|string'
         ]);
 
         $hasMisconception = false;
-        $aiFeedback = null;
+        $status     = $result['status']  ?? 'salah';
+        $aiFeedback = $result['feedback'] ?? null;
 
+        $isManual      = $request->boolean('is_manual', false);
+        $userId = Auth::id();
+        $feedbackCount = DB::table('ai_interaction_logs')
+            ->where('user_id', $userId)
+            ->where('primm_question_id', $request->pertanyaan_id)
+            ->count();
+
+        $currentAttempt = $feedbackCount + 1;
         try {
-            // Mengambil program, pertanyaan teks, dan pembahasan dari database
             $data = DB::table('primm_questions')
                 ->join('primms', 'primm_questions.primm_id', '=', 'primms.id')
-                ->select('primm_questions.pembahasan', 'primm_questions.pertanyaan', 'primms.kode_program')
+                ->select(
+                    'primm_questions.pembahasan',
+                    'primm_questions.pertanyaan',
+                    'primms.tahap',
+                    'primms.kode_program'
+                )
                 ->where('primm_questions.id', $request->pertanyaan_id)
                 ->first();
 
             if (!$data) {
-                return back()->with('aiDraftFeedback', [
-                    'pertanyaan_id' => (int) $request->pertanyaan_id,
-                    'hasMisconception' => (bool) $hasMisconception,
-                    'feedback' => $aiFeedback
+                return response()->json([
+                    'pertanyaan_id'    => (int) $request->pertanyaan_id,
+                    'status'           => 'benar',
+                    'hasMisconception' => false,
+                    'feedback'         => null,
+                    'feedbackCount'    => $feedbackCount,
                 ]);
-                
             }
 
-            $cleanPembahasan = strip_tags($data->pembahasan);
-            $cleanPembahasan = html_entity_decode($cleanPembahasan, ENT_QUOTES, 'UTF-8');
-            $cleanPembahasan = preg_replace('/\s+/', ' ', $cleanPembahasan);
-            $cleanPembahasan = trim($cleanPembahasan);
+            $cleanPembahasan = trim(preg_replace('/\s+/', ' ',
+                html_entity_decode(strip_tags($data->pembahasan), ENT_QUOTES, 'UTF-8')
+            ));
 
-            $systemPrompt = "Kamu adalah pengganti fasilitator guru untuk siswa SMK Kelas 10. Tugasmu memeriksa draf jawaban siswa dan memberikan respons sesuai kondisi jawabannya.
+            $kodeSiswa = trim($request->kode_siswa ?? '');
+            $tahap     = strtolower(trim($data->tahap));
 
-            KONTEKS DATA PEMBELAJARAN (DARI DATABASE):
-            - Kode Program: \n{$data->kode_program}
-            - Pertanyaan Teks: \"{$data->pertanyaan}\"
-            - Ekspektasi Pemahaman Benar (Target): \"{$cleanPembahasan}\"
+            $tahapInstruksi = match($tahap) {
 
-            DATA YANG SEKARANG SEDANG DIKETIK SISWA DI TEXTAREA:
-            \"{$request->answer}\"
+            'modify' => "
+            === PEMERIKSAAN KODE — TAHAP MODIFY ===
+            Ini adalah percobaan ke-{$currentAttempt}.
+            Lakukan HANYA jika kode siswa tidak kosong. Jika kosong, lewati seluruh bagian ini.
 
-            ATURAN RESPONS (2 KONDISI, PILIH SALAH SATU):
+            LANGKAH 1 — Cek kesalahan sintaks FATAL di Kode Siswa:
+            Lolos jika: kode bisa dijalankan secara logis meski ada perbedaan gaya penulisan.
+            Gagal HANYA jika: ada keyword Python yang jelas salah eja dan akan menyebabkan error
+            (contoh: 'pint' bukan 'print', 'fro' bukan 'for').
+            Jika gagal → {\"status\": \"salah\", \"feedback\":
+                \"Bagian '[HANYA kata yang salah]' belum tepat — coba periksa kembali penulisan di baris tersebut.\"}
+            STOP.
 
-            KONDISI A - SALAH : Jawaban mengandung kata/frasa yang JELAS BERTENTANGAN dengan konteks kode.
-            - Sebutkan HANYA kata yang salah di feedback, lalu arahkan siswa untuk melihat kode program kembali.
-            - Format feedback: 'Sepertinya kamu keliru pada bagian '[kata salah]' tersebut, coba lihat lagi kode programnya.'
-            - Contoh: 'menyimpan nilai huruf' → kata salah: 'huruf' → {\"hasMisconception\": true, \"feedback\": \"Sepertinya kamu keliru pada bagian 'huruf' tersebut, coba lihat lagi kode programnya.\"}
-            - Contoh: 'i untuk menghentikan program' → kata salah: 'menghentikan program' → {\"hasMisconception\": true, \"feedback\": \"Sepertinya kamu keliru pada  'menghentikan program' tersebut, coba lihat lagi kode programnya.\"}
+            LANGKAH 2 — Cek relevansi modifikasi:
+            Lolos jika: kode siswa mengandung setidaknya SATU perubahan yang mengarah ke perintah soal,
+            meski belum sempurna atau belum lengkap.
+            Gagal HANYA jika: kode siswa identik dengan kode template (tidak ada perubahan apapun).
+            Jika gagal → {\"status\": \"kurang_lengkap\", \"feedback\":
+                \"Kodenya belum berubah dari template — coba perhatikan lagi bagian mana yang perlu dimodifikasi.\"}
+            STOP.
 
-            KONDISI B - TERLALU UMUM: Jawaban tidak salah, tapi hanya 1-2 kata saja dan tidak menjelaskan apapun secara spesifik.
-            - Hanya berlaku jika jawaban benar-benar sangat singkat dan tidak informatif.
-            - Format feedback: 'Jawabanmu terlalu umum, coba jelaskan lebih spesifik.'
-            - Contoh: 'menyimpan' → {\"hasMisconception\": true, \"feedback\": \"Jawabanmu terlalu umum, coba jelaskan lebih spesifik.\"}
-            - Contoh: 'untuk i' → {\"hasMisconception\": true, \"feedback\": \"Jawabanmu terlalu umum, coba jelaskan lebih spesifik.\"}
+            Jika lolos Langkah 1 dan 2 → ABAIKAN kode siswa, lanjut evaluasi TEKS JAWABAN dengan Kondisi A-D.
+            Fokus penilaian: apakah siswa bisa menjelaskan FUNGSI dari perubahan yang ia buat.",
 
-            KONDISI C - LENGKAP: Jawaban sudah spesifik dan tidak ada yang salah.
-            - Nilai dan angka dianggap SAMA karena merujuk pada tipe data yang sama.
-            - Contoh: 'menyimpan angka dari 0 sampai 4' → {\"hasMisconception\": false, \"feedback\": null}
-            - Contoh: 'menyimpan nilai 0 sampai 4' → {\"hasMisconception\": false, \"feedback\": null}
+            'make' => "
+            === PEMERIKSAAN KODE — TAHAP MAKE ===
+            Ini adalah percobaan ke-{$currentAttempt}.
+            Lakukan HANYA jika kode siswa tidak kosong. Jika kosong, lewati seluruh bagian ini.
 
-            LOGIKA PENENTUAN KONDISI (PANDUAN UTAMA):
-            Bandingkan kata per kata dari ketikan siswa dengan Ekspektasi Pemahaman Benar.
+            LANGKAH 1 — Cek kesalahan sintaks FATAL di Kode Siswa:
+            Lolos jika: kode bisa dijalankan secara logis meski belum sempurna.
+            Gagal HANYA jika: ada keyword Python yang jelas salah eja dan akan menyebabkan error.
+            Jika gagal → {\"status\": \"salah\", \"feedback\":
+                \"Bagian '[HANYA kata yang salah]' belum tepat — coba periksa kembali penulisan di baris tersebut.\"}
+            STOP.
 
-            - Jika TIDAK ADA SATU KATA PUN dari ketikan siswa yang sesuai atau berkaitan dengan ekspektasi → KONDISI A (keliru total)
-            - Jika ADA 1 KATA ATAU LEBIH yang sesuai atau berkaitan dengan ekspektasi, namun belum lengkap → KONDISI B (minta lebih detail)  
-            - Jika ketikan siswa SUDAH MENCAKUP inti dari ekspektasi secara lengkap → KONDISI C (tidak perlu feedback)
+            LANGKAH 2 — Cek relevansi kode:
+            Lolos jika: kode siswa mencoba memenuhi minimal satu ketentuan soal, meski belum sempurna.
+            Gagal HANYA jika: kode sama sekali tidak ada hubungannya dengan perintah soal.
+            Jika gagal → {\"status\": \"salah\", \"feedback\":
+                \"Program belum menjawab ketentuan soal — coba perhatikan lagi apa yang diminta.\"}
+            STOP.
 
-            CONTOH untuk pertanyaan fungsi variabel i:
-            - Input: 'i untuk menghentikan program' → tidak ada kata yang sesuai → KONDISI A → {\"hasMisconception\": true, \"feedback\": \"Sepertinya kamu keliru pada bagian 'menghentikan program' tersebut.\"}
-            - Input: 'menyimpan nilai angka' → ada kata 'menyimpan nilai' yang mengarah → KONDISI B → {\"hasMisconception\": true, \"feedback\": \"coba jelaskan lebih detail.\"}
-            - Input: 'i menyimpan nilai 0 sampai 4 yang berubah tiap putaran' → sudah lengkap → KONDISI C → {\"hasMisconception\": false, \"feedback\": null}
-            
-            ATURAN TAMBAHAN (MUTLAK):
-            1. DILARANG menyebut istilah teknis yang benar seperti: iterator, counter, loop, perulangan, variabel.
-            2. DILARANG membocorkan isi ekspektasi pemahaman benar.
-            3. Feedback maksimal 2 kalimat pendek.
-            4. Respons HANYA dalam format JSON murni tanpa markdown.
-            5. Jika jawaban siswa TIDAK mengandung kata yang sesuai ekspektasi, tetap KONDISI A meskipun siswa sudah mengganti kata sebelumnya.
-            6. Nama teknologi atau bahasa pemrograman seperti 'python', 'java', 'html' BUKAN sinonim dari kata umum seperti 'belajar', 'memahami', 'menjalankan'.
-            7. Evaluasi HANYA berdasarkan ketikan siswa saat ini, ABAIKAN history jawaban sebelumnya.
+            Jika lolos Langkah 1 dan 2 → ABAIKAN kode siswa, lanjut evaluasi TEKS JAWABAN dengan Kondisi A-D.
+            Fokus penilaian: apakah siswa bisa menjelaskan TUJUAN dan LOGIKA dari kode yang ia buat.",
+            default => ""
+        };
 
-            ATURAN SINONIM (PENTING):
-            - Jangan menganggap salah hanya karena siswa menggunakan kata yang bersinonim atau bermakna sama dengan ekspektasi.
-            - Gunakan pemahaman bahasa natural untuk menilai apakah maksud siswa sudah sesuai dengan ekspektasi, bukan kecocokan kata per kata.
-            - Contoh umum: jika siswa menulis kata lain yang maknanya sama dengan yang ada di ekspektasi, anggap BENAR.
-            - Sinonim hanya berlaku untuk kata yang BENAR-BENAR bermakna sama secara konteks.
-            - 'python' BUKAN sinonim dari 'belajar'. 
-            - 'menghapus' BUKAN sinonim dari 'menyimpan'.
-            - Jika ragu apakah kata siswa bersinonim dengan ekspektasi, pilih KONDISI A
+            $systemPrompt = "Kamu adalah pemeriksa jawaban sekaligus pembimbing siswa yang bertugas untuk mengarahkan.
+            Periksa jawaban siswa dan respons sesuai kondisi di bawah.
+
+            KONTEKS:
+            - Tahap Belajar: {$data->tahap}
+            - Kode Awal (template soal): \n{$data->kode_program}
+            - Kode Siswa (ditulis di editor): \n{$kodeSiswa}
+            - Pertanyaan: \"{$data->pertanyaan}\"
+            - Target Pemahaman: \"{$cleanPembahasan}\"
+            - Jawaban siswa: \"{$request->answer}\"
+
+            {$tahapInstruksi}
+
+            === CARA MENILAI JAWABAN ===
+            Gunakan Target Pemahaman hanya sebagai ARAH, bukan checklist kata per kata
+
+            PRINSIP UTAMA — BUKTI PEMAHAMAN:
+            Siswa dianggap PAHAM jika jawaban mereka membuktikan pemahaman dengan CARA APAPUN:
+            - Definisi konseptual yang tepat
+            - Simulasi/trace konkret yang akurat dan mencakup semua kasus
+            - Penjelasan sebab-akibat yang logis
+            - Contoh output yang benar
+            Bentuk penyampaian tidak dinilai. Yang dinilai adalah AKURASI ISI.
+
+            Tanyakan pada diri sendiri:
+            - Apakah konsepnya bertentangan dengan kode? → SALAH
+            - Apakah arahnya benar tapi masih permukaan atau belum tuntas? → KURANG LENGKAP,
+            arahkan siswa menjelaskan lebih dalam sesuai konteks pertanyaan tanpa bocor jawaban
+            - Apakah inti konsep sudah tertangkap dengan baik? → BENAR
+
+            === 4 KONDISI RESPONS ===
+
+            KONDISI A — SALAH:
+            Jawaban mengandung konsep yang jelas bertentangan dengan kode dan pertanyaan atau sama sekali tidak nyambung.
+            → JANGAN sebutkan bagian mana yang benar.
+            → Identifikasi HANYA kata/frasa spesifik yang keliru, bukan seluruh kalimat jawaban siswa.
+            Contoh: jika jawaban \"menyimpan nilai huruf\" dan yang salah hanya \"huruf\",
+            maka yang disebut keliru hanya \"huruf\", bukan \"menyimpan nilai huruf\".
+            → Identifikasi sendiri bagian kode yang berkaitan dengan kekeliruan,
+            lalu arahkan siswa ke sana tanpa mengisyaratkan jawaban yang benar.
+            → {\"status\": \"salah\", \"feedback\": \"Bagian '[HANYA kata/frasa yang keliru]' belum tepat — coba perhatikan lagi '[bagian kode yang relevan]' di program tersebut.\"}
+
+            KONDISI B — BENAR TAPI TIDAK LENGKAP:
+            Arah jawaban sudah benar tapi masih permukaan, kurang detail, atau belum tuntas.
+            → JANGAN sebutkan bagian mana yang sudah benar.
+            → JANGAN bocorkan bagian yang kurang.
+            → Arahkan siswa menjelaskan lebih spesifik sesuai konteks pertanyaan.
+            → {\"status\": \"kurang_lengkap\", \"feedback\": \"Sudah mengarah, tapi coba jelaskan lebih detail — [arahan spesifik dalam bentuk KALIMAT PERINTAH, bukan pertanyaan].\"}
+
+            KONDISI C — BENAR DAN LENGKAP:
+            Jawaban sudah mencakup inti target pemahaman secara spesifik.
+            → {\"status\": \"benar\", \"feedback\": \"Pemahamanmu sudah bagus! tingkatkan lagi! 🎉\"}
+
+            KONDISI D — KOSONG ATAU TERLALU SINGKAT:
+            → {\"status\": \"kurang_lengkap\", \"feedback\": \"Tulis dulu pendapatmu selengkapnya, baru bisa diperiksa.\"}
+
+           === KONDISI KHUSUS (Percobaan saat ini: {$currentAttempt}) ===
+            Jika ini pemeriksaan ke-3 DAN hasilnya BUKAN benar (Kondisi A, B, atau D):
+            → Tetap tulis feedback seperti biasa, lalu tambahkan kalimat penutup:
+            \"Ini sudah percobaan terakhir — coba pelajari lagi materinya ya, kamu pasti bisa menyimpulkan sendiri.\"
+            Jika hasilnya benar (Kondisi C), respons normal tanpa kalimat penutup.
+
+            === ATURAN MUTLAK ===
+            1. DILARANG bocorkan jawaban benar atau bagian yang kurang dari Target Pemahaman: \"{$cleanPembahasan}\".
+            2. DILARANG menyebut istilah teknis (loop, variabel, counter, iterator) sebelum siswa menyebutnya.
+            3. DILARANG memberi pertanyaan balik.
+            Contoh arahan yang benar:
+            ✅ \'coba jelaskan apa yang terjadi pada nilai i di setiap putaran.\'
+            ❌ \'bagaimana nilai i berubah di setiap putaran?\'
+            4. DILARANG bilang 'belum tepat' jika arah jawaban sudah benar — gunakan 'belum lengkap' atau 'coba jelaskan lebih detail'.
+            5. Feedback maksimal 2 kalimat singkat dan natural (kalimat penutup percobaan ke-3 tidak dihitung).
+            6. Sinonim bermakna sama dianggap BENAR.
+            7. Nilai dan angka bermakna sama dianggap BENAR.
+            8. Respons HANYA JSON murni tanpa markdown.
+            9. Jika siswa menjelaskan dengan contoh atau simulasi konkret yang akurat,
+            nilainya SAMA dengan penjelasan konseptual. Jangan minta siswa
+            mengulang dengan kata-kata yang lebih 'formal' atau 'abstrak'.
 
             FORMAT WAJIB:
-            {
-            \"hasMisconception\": true/false,
-            \"feedback\": \"teks feedback atau null\"
-            }";
+            {\"status\": \"salah|kurang_lengkap|benar\", \"feedback\": \"teks atau null\"}";
 
-            $apiKey = env('GROQ_API_KEY') ?? env('DEEPSEEK_API_KEY');
-            $baseUrl = env('GROQ_API_KEY') 
-                ? 'https://api.groq.com/openai/v1/chat/completions' 
-                : 'https://api.deepseek.com/chat/completions';
-            $model = env('GROQ_API_KEY') 
-                ? env('GROQ_MODEL', 'llama-3.3-70b-versatile') 
-                : env('DEEPSEEK_MODEL', 'deepseek-chat');
-
-            if (!$apiKey) {
-                return response()->json([
-                    'pertanyaan_id' => (int) $request->pertanyaan_id,
-                    'hasMisconception' => false,
-                    'feedback' => null
-                ]);
+            $providers = [];
+            if ($key = env('GROQ_API_KEY')) {
+                $providers[] = [
+                    'key'   => $key,
+                    'url'   => 'https://api.groq.com/openai/v1/chat/completions',
+                    'model' => env('GROQ_MODEL', 'llama-3.3-70b-versatile'),
+                ];
+            }
+            if ($key = env('DEEPSEEK_API_KEY')) {
+                $providers[] = [
+                    'key'   => $key,
+                    'url'   => 'https://api.deepseek.com/chat/completions',
+                    'model' => env('DEEPSEEK_MODEL', 'deepseek-chat'),
+                ];
             }
 
-            $response = Http::withoutVerifying()->timeout(15)
-                ->withToken($apiKey)
-                ->post($baseUrl, [
-                    'model' => $model,
-                    'messages' => [
-                        ['role' => 'system', 'content' => $systemPrompt],
-                        ['role' => 'user', 'content' => "Analisis ketikan saya berdasarkan instruksi."]
-                    ],
-                    'temperature' => 0.1,
-                    'max_tokens' => 150,
-                ]);
+            $response = null;
+            foreach ($providers as $provider) {
+                try {
+                    $resp = Http::withoutVerifying()->timeout(15)
+                        ->withToken($provider['key'])
+                        ->post($provider['url'], [
+                            'model'       => $provider['model'],
+                            'messages'    => [
+                                ['role' => 'system', 'content' => $systemPrompt],
+                                ['role' => 'user',   'content' => 'Analisis jawaban saya sekarang.'],
+                            ],
+                            'temperature' => 0.1,
+                            'max_tokens'  => 150,
+                        ]);
 
-            if ($response->successful()) {
+                    if ($resp->successful()) { $response = $resp; break; }
+                    Log::warning("analyzeDraftAnswer: {$provider['url']} gagal (Status: {$resp->status()})");
+                } catch (\Exception $e) {
+                    Log::error("analyzeDraftAnswer error: " . $e->getMessage());
+                }
+            }
+
+            if ($response) {
                 $aiText = $response->json()['choices'][0]['message']['content'] ?? '{}';
-                
-                // Log mentah
-                Log::info("AI RAW: " . json_encode($aiText));
-                
-                // Bersihkan semua kemungkinan wrapper
-                $cleanJson = preg_replace('/^```json\s*/i', '', trim($aiText));
-                $cleanJson = preg_replace('/```$/', '', trim($cleanJson));
-                $cleanJson = trim($cleanJson);
-                
-                // Cari JSON object
-                preg_match('/\{.*\}/s', $cleanJson, $matches);
-                $jsonStr = $matches[0] ?? '{}';
-                
-                Log::info("CLEAN JSON: " . $jsonStr);
-                
-                $result = json_decode($jsonStr, true);
-                
-                Log::info("DECODE ERROR: " . json_last_error_msg());
-                Log::info("RESULT: " . json_encode($result));
+                $clean  = trim(preg_replace('/```$/', '', preg_replace('/^```json\s*/i', '', trim($aiText))));
+                preg_match('/\{.*\}/s', $clean, $matches);
+                $result = json_decode($matches[0] ?? '{}', true);
+
+                Log::info("analyzeDraftAnswer result: " . json_encode($result));
 
                 if (json_last_error() === JSON_ERROR_NONE && is_array($result)) {
-                    $hasMisconception = (bool) ($result['hasMisconception'] ?? false);
+                    $status     = $result['status']  ?? 'salah';
                     $aiFeedback = $result['feedback'] ?? null;
+
+                    if ($status === 'benar') {
+                        $hasMisconception = false;
+
+                        DB::table('ai_interaction_logs')->insert([
+                            'user_id'             => $userId,
+                            'primm_question_id'   => $request->pertanyaan_id,
+                            'student_answer_text' => $request->answer,
+                            'ai_feedback'         => $aiFeedback ?? '',
+                            'is_valid'            => true,  // ← bedanya di sini
+                            'created_at'          => now(),
+                            'updated_at'          => now(),
+                        ]);
+
+                    } else {
+                        $hasMisconception = true;
+
+                        DB::table('ai_interaction_logs')->insert([
+                            'user_id'             => $userId,
+                            'primm_question_id'   => $request->pertanyaan_id,
+                            'student_answer_text' => $request->answer,
+                            'ai_feedback'         => $aiFeedback ?? '',
+                            'is_valid'            => false,
+                            'created_at'          => now(),
+                            'updated_at'          => now(),
+                        ]);
+                    }
+
+                    // Selalu update feedbackCount setelah insert
+                    $feedbackCount = DB::table('ai_interaction_logs')
+                        ->where('user_id', $userId)
+                        ->where('primm_question_id', $request->pertanyaan_id)
+                        ->count();
                 }
-            } else {
-                // TAMBAHKAN INI
-                return response()->json([
-                    'debug_status' => $response->status(),
-                    'debug_body' => $response->body(),
-                    'pertanyaan_id' => (int) $request->pertanyaan_id,
-                    'hasMisconception' => false,
-                    'feedback' => null
-                ]);
             }
 
         } catch (\Exception $e) {
-            Log::error("Gagal mendeteksi draf jawaban: " . $e->getMessage());
+            Log::error("Gagal analyzeDraftAnswer: " . $e->getMessage());
         }
 
         return response()->json([
-            'pertanyaan_id' => (int) $request->pertanyaan_id,
+            'pertanyaan_id'    => (int) $request->pertanyaan_id,
+            'status'           => $status,
             'hasMisconception' => (bool) $hasMisconception,
-            'feedback' => $aiFeedback
+            'feedback'         => $aiFeedback,
+            'feedbackCount'    => $feedbackCount,
         ]);
-
     }
 }

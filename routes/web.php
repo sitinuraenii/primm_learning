@@ -144,6 +144,9 @@ Route::middleware(['auth'])->group(function () {
     Route::get('/siswa/nilaiSiswa', [StudentGradeController::class, 'index'])->name('siswa.hasil.index');
     Route::get('/siswa/nilaiSiswa/detailHasil/{id}', [StudentGradeController::class, 'show'])
         ->name('siswa.hasil.show');
+
+    Route::get('/guru/nilai/siswa/{userId}/ai-logs', [GradingController::class, 'aiInteractionLogs'])->name('grading.aiLogs');
+    Route::delete('/guru/nilai/siswa/{userId}/ai-logs/{pertanyaan_id}/reset', [GradingController::class, 'resetAiInteraction'])->name('grading.resetAiLog');
 });
 
 
@@ -195,5 +198,6 @@ Route::post('/hint', [GeminiController::class, 'getHint'])
      ->name('hint.request')
      ->middleware(['auth']);
 Route::post('/tasks/{pertanyaan_id}/analyze-draft', [GeminiController::class, 'analyzeDraftAnswer']);
+Route::get('/tasks/{pertanyaan_id}/check-status', [GeminiController::class, 'checkStatus']);
 
 require __DIR__ . '/settings.php';

@@ -86,11 +86,11 @@ export default function ListPrimm({ course, progress, isAllFinished }: any) {
                                         </h3>
                                         <div className="space-y-2">
                                             {[
-                                                { t: "Predict", i: Telescope, c: "bg-amber-500" },
-                                                { t: "Run", i: PlayCircle, c: "bg-emerald-500" },
-                                                { t: "Investigate", i: SearchCode, c: "bg-blue-500" },
-                                                { t: "Modify", i: Pencil, c: "bg-purple-500" },
-                                                { t: "Make", i: Cpu, c: "bg-rose-500" }
+                                                { t: "Memprediksi Program", i: Telescope, c: "bg-amber-500" },
+                                                { t: "Menjalankan Program", i: PlayCircle, c: "bg-emerald-500" },
+                                                { t: "Menelusuri Program", i: SearchCode, c: "bg-blue-500" },
+                                                { t: "Mengubah Program", i: Pencil, c: "bg-purple-500" },
+                                                { t: "Membuat Program", i: Cpu, c: "bg-rose-500" }
                                             ].map((item, i) => (
                                                 <div key={i} className="flex items-center gap-3 p-2.5 bg-white rounded-xl shadow-sm border border-gray-100">
                                                     <div className={`w-7 h-7 ${item.c} text-white rounded-lg flex items-center justify-center flex-shrink-0`}>

@@ -1,5 +1,5 @@
 import React from 'react';
-import { useForm, Head, Link } from '@inertiajs/react';
+import { useForm, Head, Link, router } from '@inertiajs/react';
 import AppLayout from '@/layouts/app-layout';
 import { type BreadcrumbItem } from '@/types';
 import { Save, MessageSquare, ChevronLeft, User, Code2, Terminal, Info, CheckCircle2 } from "lucide-react";
@@ -12,7 +12,7 @@ interface GradingForm {
     feedbacks: Record<number, string>;
 }
 
-export default function DetailJawaban({ student, answers, currentMateri }: any) {
+export default function DetailJawaban({ student, answers, currentMateri, aiLogs }: any) {
     const { data, setData, post, processing } = useForm<GradingForm>({
         scores: answers.reduce((acc: any, ans: any) => ({ ...acc, [ans.id]: ans.skor || 0 }), {}),
         feedbacks: answers.reduce((acc: any, ans: any) => ({ ...acc, [ans.id]: ans.feedback || "" }), {}),
@@ -161,6 +161,53 @@ export default function DetailJawaban({ student, answers, currentMateri }: any) 
                                                 </div>
                                             )}
                                         </div>
+
+                                        {/* AI Interaction Logs per soal */}
+                                        {aiLogs?.filter((log: any) => log.primm_question_id === ans.question?.id).length > 0 && (
+                                            <div className="px-5 pb-4">
+                                                <div className="border border-amber-200 rounded-xl overflow-hidden">
+                                                    <div className="bg-amber-50 px-4 py-2 flex items-center justify-between border-b border-amber-100">
+                                                        <span className="text-[10px] font-black text-amber-600 uppercase tracking-widest">
+                                                            Riwayat Cek Jawaban AI ({aiLogs.filter((l: any) => l.primm_question_id === ans.question?.id).length}/3)
+                                                        </span>
+                                                        <button
+                                                            onClick={() => {
+                                                                if (!confirm('Reset percobaan siswa untuk soal ini?')) return;
+                                                                router.delete(`/guru/nilai/siswa/${student.id}/ai-logs/${ans.question?.id}/reset`, {
+                                                                    preserveScroll: true,
+                                                                });
+                                                            }}
+                                                            className="px-3 py-1 bg-red-500 hover:bg-red-600 text-white text-[10px] font-black rounded-lg transition-all"
+                                                        >
+                                                            Reset
+                                                        </button>
+                                                    </div>
+
+                                                    <div className="divide-y divide-amber-100">
+                                                        {aiLogs
+                                                            .filter((log: any) => log.primm_question_id === ans.question?.id)
+                                                            .map((log: any, i: number) => (
+                                                                <div key={log.id} className="px-4 py-3 space-y-2">
+                                                                    <span className="text-[10px] font-black text-slate-400 uppercase">
+                                                                        Percobaan {i + 1} — {new Date(log.created_at).toLocaleString('id-ID')}
+                                                                    </span>
+                                                                    <p className="text-xs text-slate-700 bg-slate-50 p-3 rounded-lg">
+                                                                        <span className="font-black text-slate-400 block text-[10px] uppercase mb-1">Jawaban Siswa:</span>
+                                                                        {log.student_answer_text || '-'}
+                                                                    </p>
+                                                                    <p className="text-xs text-amber-800 bg-amber-50 p-3 rounded-lg">
+                                                                        <span className="font-black text-amber-500 block text-[10px] uppercase mb-1">Feedback AI:</span>
+                                                                        {log.ai_feedback || '-'}
+                                                                    </p>
+                                                                </div>
+                                                            ))
+                                                        }
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
+
+
                                         <div className="bg-slate-50 p-4 border-t border-slate-100 flex flex-col sm:flex-row gap-4">
                                             <div className="w-full sm:w-24">
                                                 <label className="text-[9px] font-black text-slate-400 uppercase block mb-1.5 tracking-wider">Skor</label>
