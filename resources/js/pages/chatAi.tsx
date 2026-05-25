@@ -153,7 +153,14 @@ const ChatAI: React.FC<ChatAIProps> = ({ pertanyaanId, activeStep}) => {
                                         msg.role === 'user' 
                                         ? 'self-end bg-[#0F828C] text-white rounded-tr-none border-[#0F828C]' 
                                         : 'self-start bg-white text-gray-800 rounded-tl-none border-gray-100'
-                                    }`}>
+                                    }`}
+                                        onCopy={(e) => {
+                                            if (msg.role === 'bot') {
+                                                e.preventDefault();
+                                            }
+                                        }}
+                                        style={msg.role === 'bot' ? { userSelect: 'none' } : {}}
+                                    >
                                         {msg.content}
                                     </div>
                                 </div>

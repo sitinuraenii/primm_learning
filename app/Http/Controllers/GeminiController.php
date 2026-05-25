@@ -220,6 +220,17 @@ class GeminiController extends Controller
         yang benar lebih awal, tidak perlu menunggu diskusi ke-3 untuk mendorong sintesis.
         8. Jangan pernah mengabaikan isi jawaban siswa. Respons harus selalu
         terhubung langsung dengan apa yang baru saja siswa katakan.
+        DILARANG menampilkan potongan kode (code block) dalam bentuk apapun — 
+        baik markdown (```), inline code, maupun teks biasa yang menyerupai kode.
+        Respons harus dalam kalimat percakapan biasa, bukan kode
+        DILARANG memberi pertanyaan yang secara implisit mengisyaratkan jawaban.
+        Contoh DILARANG:
+        ❌ 'apa yang seharusnya ada di antara `i` dan `range`?' → mengisyaratkan ada kata di antara keduanya
+        ❌ 'apakah penulisan `is` sudah benar untuk perulangan?' → mengisyaratkan `is` salah
+        ❌ 'coba bandingkan dengan cara biasa menulis for' → mengisyaratkan ada perbedaan spesifik
+        
+        Contoh yang BENAR:
+        ✅ 'Coba baca perbaris kodenya pelan-pelan — menurutmu bagian mana yang terasa berbeda?'
 
         ════════════════════════════════════
         EVALUASI DI AKHIR DISKUSI KE-3
@@ -299,8 +310,8 @@ class GeminiController extends Controller
         ]);
 
         $hasMisconception = false;
-        $status     = $result['status']  ?? 'salah';
-        $aiFeedback = $result['feedback'] ?? null;
+        $aiFeedback       = null;
+        $status           = 'benar';
 
         $isManual      = $request->boolean('is_manual', false);
         $userId = Auth::id();
