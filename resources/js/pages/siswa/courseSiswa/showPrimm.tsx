@@ -11,7 +11,7 @@ interface Question {
     id: number; 
     pertanyaan: string; 
     pembahasan: string; 
-    student_answers?: Array<{
+    answers?: Array<{
         jawaban_siswa: string;
         kode_program: string;
     }>;
@@ -142,18 +142,26 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
     };
 
     const getPastPredictAnswer = () => {
-        if (activeStep !== 'run' || !primm['predict']) return null;
+    if (activeStep?.toLowerCase() !== 'run') return null;
 
-        const predictActivity = primm['predict'][currentActivityIdx];
-        if (!predictActivity || !predictActivity.questions.length) return null;
+    if (!primm || !primm['predict']) return null;
 
-        const firstPredictQId = predictActivity.questions[0].id;
-        const savedData = (existingAnswers as any)?.[firstPredictQId];
+    const predictActivity = primm['predict'][currentActivityIdx];
+    if (!predictActivity || !predictActivity.questions || predictActivity.questions.length === 0) return null;
 
-        if (!savedData) return null;
+    const firstPredictQ = predictActivity.questions[0];
+    if (!firstPredictQ) return null;
 
-        return typeof savedData === 'object' ? savedData.jawaban_siswa : savedData;
-    };
+    if (firstPredictQ.answers && firstPredictQ.answers.length > 0) {
+        return firstPredictQ.answers[0].jawaban_siswa || null;
+    }
+
+    if (answers[firstPredictQ.id]) {
+        return answers[firstPredictQ.id];
+    }
+
+    return null;
+};
 
     const pastPredictAnswer = getPastPredictAnswer();
 
@@ -711,22 +719,26 @@ export default function ShowPrimm({ course, primm, activeStepFromUrl, existingAn
                                                     </div>
                                                 </div>
 
-                                                {activeStep === 'run' && pastPredictAnswer && (
-                                                    <div className="bg-emerald-50 border-l-4 border-emerald-400 p-4 rounded-r-2xl mb-4 animate-in fade-in zoom-in duration-300">
-                                                        <span className="text-[10px] font-black text-emerald-600 uppercase tracking-widest block mb-1">
-                                                            Jawaban Prediksi Anda Sebelumnya:
-                                                        </span>
-                                                        <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
-                                                            {pastPredictAnswer}
-                                                        </p>
-                                                    </div>
-                                                )}
+                                                
 
                                                 <div className="p-6 space-y-4">
                                                     {!isCodingStep && (
+                                                        
                                                         <div className="flex flex-col gap-2">
+
+                                                            {activeStep?.toLowerCase() === 'run' && primm?.['predict']?.[currentActivityIdx]?.questions?.[0]?.answers?.[0]?.jawaban_siswa && (
+                                                                <div className="bg-amber-50 border-l-4 border-amber-300 p-4 rounded-r-2xl mb-2 animate-in fade-in zoom-in duration-300">
+                                                                    <span className="text-[10px] font-black text-amber-800 uppercase tracking-widest block mb-1">
+                                                                        Jawaban Prediksi kamu Sebelumnya:
+                                                                    </span>
+                                                                    <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">
+                                                                        {primm['predict'][currentActivityIdx].questions[0].answers[0].jawaban_siswa}
+                                                                    </p>
+                                                                </div>
+                                                            )}
+
                                                             <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">
-                                                                Jawaban:
+                                                                Jawaban kamu:
                                                             </span>
 
                                                             {isAnswered ? (

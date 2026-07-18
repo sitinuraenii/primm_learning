@@ -115,7 +115,7 @@ const ChatAI: React.FC<ChatAIProps> = ({ pertanyaanId, activeStep}) => {
     return (
         <div className="fixed bottom-14 right-15 z-[100] flex flex-col items-end gap-3 font-sans">
             {isOpen && (
-                <div className="w-[350px] md:w-[380px] h-[500px] bg-white shadow-2xl rounded-3xl overflow-hidden border border-gray-100 flex flex-col animate-in slide-in-from-bottom-5 duration-300">
+                <div className="w-[400px] md:w-[380px] h-[400px] bg-white shadow-2xl rounded-3xl overflow-hidden border border-gray-100 flex flex-col animate-in slide-in-from-bottom-5 duration-300">
                     
                     {/* Header */}
                     <div className="bg-[#0F828C] p-4 text-white flex items-center justify-between shadow-md">

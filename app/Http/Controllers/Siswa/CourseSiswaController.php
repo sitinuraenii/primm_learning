@@ -55,12 +55,16 @@ class CourseSiswaController extends Controller
 
     public function showPrimm(int $id, string $step)
 {
-    $course = Course::with(['primms.questions'])->findOrFail($id);
-    $primmData = $course->primms->groupBy('tahap');
     $userId = Auth::id();
+    $course = Course::with([
+        'primms.questions.answers' => function($query) use ($userId) {
+            $query->where('user_id', $userId);
+        }
+    ])->findOrFail($id);
+    $primmData = $course->primms->groupBy('tahap');
 
     $stepsToFetch = [$step];
-    if (in_array($step, ['investigate'])) {
+    if (in_array($step, ['run', 'investigate'])) {
         $stepsToFetch[] = 'predict';
     }
 
